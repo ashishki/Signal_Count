@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Signal Count Demo</title>
+    <style>
+      :root {
+        --bg: #f3efe4;
+        --panel: rgba(255, 252, 246, 0.92);
+        --ink: #18242d;
+        --muted: #5e6c71;
+        --accent: #b24c2e;
+        --accent-soft: #efcfbd;
+        --line: rgba(24, 36, 45, 0.14);
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top right, rgba(178, 76, 46, 0.18), transparent 28%),
+          radial-gradient(circle at bottom left, rgba(24, 36, 45, 0.12), transparent 30%),
+          var(--bg);
+      }
+
+      main {
+        max-width: 1120px;
+        margin: 0 auto;
+        padding: 32px 20px 48px;
+      }
+
+      .hero {
+        display: grid;
+        gap: 24px;
+        grid-template-columns: 1.1fr 0.9fr;
+        align-items: start;
+      }
+
+      .panel,
+      .job-panel,
+      .fixture-card {
+        border: 1px solid var(--line);
+        border-radius: 18px;
+        background: var(--panel);
+        backdrop-filter: blur(8px);
+        box-shadow: 0 18px 40px rgba(24, 36, 45, 0.08);
+      }
+
+      .intro {
+        padding: 28px;
+      }
+
+      h1,
+      h2,
+      h3 {
+        margin-top: 0;
+        font-weight: 700;
+      }
+
+      .eyebrow {
+        margin: 0 0 12px;
+        color: var(--accent);
+        letter-spacing: 0.12em;
+        text-transform: uppercase;
+        font-size: 0.75rem;
+      }
+
+      .intro p,
+      .fixture-card p,
+      .job-panel p {
+        line-height: 1.55;
+      }
+
+      .thesis-form {
+        padding: 24px;
+      }
+
+      .thesis-form form,
+      .fixture-grid {
+        display: grid;
+        gap: 14px;
+      }
+
+      label {
+        display: grid;
+        gap: 8px;
+        font-size: 0.95rem;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px 14px;
+        font: inherit;
+        background: rgba(255, 255, 255, 0.74);
+      }
+
+      button {
+        border: 0;
+        border-radius: 999px;
+        padding: 12px 18px;
+        font: inherit;
+        font-weight: 700;
+        color: #fff7f1;
+        background: linear-gradient(135deg, #18242d, var(--accent));
+        cursor: pointer;
+      }
+
+      .fixtures {
+        margin-top: 28px;
+      }
+
+      .fixture-grid {
+        grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      }
+
+      .fixture-card {
+        padding: 18px;
+      }
+
+      .fixture-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 8px;
+        margin: 0;
+      }
+
+      .fixture-meta dt {
+        color: var(--muted);
+        font-size: 0.8rem;
+      }
+
+      .fixture-meta dd {
+        margin: 4px 0 0;
+      }
+
+      .job-panel {
+        margin-top: 28px;
+        padding: 24px;
+      }
+
+      .job-id,
+      .job-meta {
+        color: var(--muted);
+      }
+
+      .job-memo {
+        margin: 24px 0;
+      }
+
+      .memo-warning {
+        border-left: 4px solid var(--accent);
+        background: var(--accent-soft);
+        padding: 12px 14px;
+        margin-bottom: 18px;
+      }
+
+      .ledger-table {
+        width: 100%;
+        border-collapse: collapse;
+      }
+
+      .ledger-table th,
+      .ledger-table td {
+        padding: 10px 8px;
+        border-bottom: 1px solid var(--line);
+        text-align: left;
+      }
+
+      .topology-panel {
+        margin-top: 20px;
+      }
+
+      @media (max-width: 760px) {
+        .hero {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <article class="panel intro">
+          <p class="eyebrow">Operator View</p>
+          <h1>Signal Count Demo Console</h1>
+          <p>
+            Submit a thesis, inspect the latest memo, and review which specialist
+            nodes participated in the run. The memo stays central; the UI only
+            exposes the minimum demo context around it.
+          </p>
+          <section class="fixtures">
+            <h2>Demo Fixtures</h2>
+            <div class="fixture-grid">
+              $fixture_cards
+            </div>
+          </section>
+        </article>
+
+        <section class="panel thesis-form">
+          <h2>Submit Thesis</h2>
+          <form action="/demo/submit" method="post">
+            <label>
+              Thesis
+              <textarea name="thesis" rows="6" placeholder="ETH can rally on improving ETF flows."></textarea>
+            </label>
+            <label>
+              Asset
+              <input name="asset" type="text" value="ETH" />
+            </label>
+            <label>
+              Horizon Days
+              <input name="horizon_days" type="number" value="30" min="1" />
+            </label>
+            <button type="submit">Create Job</button>
+          </form>
+        </section>
+      </section>
+
+      $latest_job_panel
+    </main>
+  </body>
+</html>
