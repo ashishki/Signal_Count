@@ -1,0 +1,1 @@
+"""Signal Count application package."""
