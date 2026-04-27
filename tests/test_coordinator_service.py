@@ -1,0 +1,239 @@
+import asyncio
+import time
+
+from app.axl.registry import AXLRegistry
+from app.config.settings import Settings
+from app.coordinator.service import CoordinatorService
+from app.schemas.contracts import ScenarioView, SpecialistResponse, ThesisRequest
+
+
+class StubAXLClient:
+    def __init__(self) -> None:
+        self.topology_snapshot = {
+            "local_peer_id": "peer-coordinator-example",
+            "peers": [
+                "peer-regime-example",
+                "peer-narrative-example",
+                "peer-risk-example",
+            ],
+        }
+        self.call_log: list[tuple[str, str]] = []
+        self.dispatch_roles: list[str] = []
+        self.payloads: list[dict[str, object]] = []
+
+    async def fetch_topology(self) -> dict[str, object]:
+        self.call_log.append(("topology", "fetch"))
+        return self.topology_snapshot
+
+    async def dispatch_specialist(
+        self,
+        peer_id: str,
+        service_name: str,
+        payload: dict[str, object],
+    ) -> SpecialistResponse:
+        self.call_log.append(("dispatch", str(payload["role"])))
+        self.dispatch_roles.append(str(payload["role"]))
+        self.payloads.append(payload)
+        await asyncio.sleep(0.05)
+        return SpecialistResponse(
+            job_id=str(payload["job_id"]),
+            node_role=str(payload["role"]),
+            peer_id=peer_id,
+            summary=f"{payload['role']} summary",
+            scenario_view=ScenarioView(bull=0.3, base=0.4, bear=0.3),
+            signals=[service_name],
+            risks=[],
+            confidence=0.6,
+            citations=[],
+            timestamp="2026-04-22T00:00:00Z",
+        )
+
+
+class StubMarketDataProvider:
+    def __init__(self) -> None:
+        self.requests: list[ThesisRequest] = []
+
+    async def fetch_snapshot(self, request: ThesisRequest) -> dict[str, float]:
+        self.requests.append(request)
+        return {"price_return": 0.08, "volatility": 0.18}
+
+
+class StubNewsFeedProvider:
+    def __init__(self) -> None:
+        self.requests: list[ThesisRequest] = []
+
+    async def fetch_headlines(self, request: ThesisRequest) -> list[str]:
+        self.requests.append(request)
+        return [
+            "ETF flow expectations improve",
+            "Macro data keeps liquidity hopes alive",
+        ]
+
+
+def test_coordinator_dispatches_and_collects_all_specialist_responses() -> None:
+    axl_client = StubAXLClient()
+    market_data_provider = StubMarketDataProvider()
+    news_feed_provider = StubNewsFeedProvider()
+    service = CoordinatorService(
+        axl_client=axl_client,
+        registry=AXLRegistry(Settings()),
+        market_data_provider=market_data_provider,
+        news_feed_provider=news_feed_provider,
+        llm_client=object(),
+    )
+    request = ThesisRequest(
+        thesis="ETH can extend higher on ETF demand.",
+        asset="ETH",
+        horizon_days=30,
+    )
+
+    started_at = time.perf_counter()
+    result = asyncio.run(
+        service.dispatch(job_id="job-coordinator-123", request=request)
+    )
+    elapsed = time.perf_counter() - started_at
+
+    assert len(result.responses) == 3
+    assert {response.node_role for response in result.responses} == {
+        "regime",
+        "narrative",
+        "risk",
+    }
+    assert result.partial is False
+    assert result.topology_snapshot == axl_client.topology_snapshot
+    assert market_data_provider.requests == [request]
+    assert news_feed_provider.requests == [request]
+    assert axl_client.dispatch_roles == ["regime", "narrative", "risk"]
+    assert elapsed < 0.12
+
+
+def test_coordinator_dispatch_payloads_are_transport_safe() -> None:
+    axl_client = StubAXLClient()
+    service = CoordinatorService(
+        axl_client=axl_client,
+        registry=AXLRegistry(Settings()),
+        market_data_provider=StubMarketDataProvider(),
+        news_feed_provider=StubNewsFeedProvider(),
+        llm_client=object(),
+    )
+    request = ThesisRequest(
+        thesis="ETH can extend higher on ETF demand.",
+        asset="ETH",
+        horizon_days=30,
+    )
+
+    asyncio.run(service.dispatch(job_id="job-transport-safe", request=request))
+
+    assert all("llm_client" not in payload for payload in axl_client.payloads)
+    assert axl_client.payloads == [
+        {
+            "job_id": "job-transport-safe",
+            "role": "regime",
+            "asset": "ETH",
+            "horizon_days": 30,
+            "thesis": "ETH can extend higher on ETF demand.",
+            "snapshot": {"price_return": 0.08, "volatility": 0.18},
+        },
+        {
+            "job_id": "job-transport-safe",
+            "role": "narrative",
+            "asset": "ETH",
+            "horizon_days": 30,
+            "thesis": "ETH can extend higher on ETF demand.",
+            "headlines": [
+                "ETF flow expectations improve",
+                "Macro data keeps liquidity hopes alive",
+            ],
+        },
+        {
+            "job_id": "job-transport-safe",
+            "role": "risk",
+            "asset": "ETH",
+            "horizon_days": 30,
+            "thesis": "ETH can extend higher on ETF demand.",
+        },
+    ]
+
+
+def test_coordinator_records_topology_snapshot_per_job() -> None:
+    axl_client = StubAXLClient()
+    service = CoordinatorService(
+        axl_client=axl_client,
+        registry=AXLRegistry(Settings()),
+        market_data_provider=StubMarketDataProvider(),
+        news_feed_provider=StubNewsFeedProvider(),
+        llm_client=object(),
+    )
+    request = ThesisRequest(
+        thesis="ETH momentum remains constructive.",
+        asset="ETH",
+        horizon_days=14,
+    )
+
+    result = asyncio.run(
+        service.dispatch(job_id="job-coordinator-456", request=request)
+    )
+
+    assert result.topology_snapshot == {
+        "local_peer_id": "peer-coordinator-example",
+        "peers": [
+            "peer-regime-example",
+            "peer-narrative-example",
+            "peer-risk-example",
+        ],
+    }
+    assert axl_client.call_log[0] == ("topology", "fetch")
+    assert axl_client.call_log[1:] == [
+        ("dispatch", "regime"),
+        ("dispatch", "narrative"),
+        ("dispatch", "risk"),
+    ]
+
+
+def test_coordinator_records_axl_dispatch_evidence_per_role() -> None:
+    service = CoordinatorService(
+        axl_client=StubAXLClient(),
+        registry=AXLRegistry(Settings()),
+        market_data_provider=StubMarketDataProvider(),
+        news_feed_provider=StubNewsFeedProvider(),
+        llm_client=object(),
+    )
+    request = ThesisRequest(
+        thesis="ETH momentum remains constructive.",
+        asset="ETH",
+        horizon_days=14,
+    )
+
+    result = asyncio.run(
+        service.dispatch(job_id="job-coordinator-789", request=request)
+    )
+
+    assert [record.to_dict() for record in result.node_execution_records] == [
+        {
+            "node_role": "regime",
+            "peer_id": "peer-regime-example",
+            "status": "completed",
+            "latency_ms": result.node_execution_records[0].latency_ms,
+            "service_name": "regime_analyst",
+            "transport": "axl-mcp",
+            "dispatch_target": "/mcp/peer-regime-example/regime_analyst",
+        },
+        {
+            "node_role": "narrative",
+            "peer_id": "peer-narrative-example",
+            "status": "completed",
+            "latency_ms": result.node_execution_records[1].latency_ms,
+            "service_name": "narrative_analyst",
+            "transport": "axl-mcp",
+            "dispatch_target": "/mcp/peer-narrative-example/narrative_analyst",
+        },
+        {
+            "node_role": "risk",
+            "peer_id": "peer-risk-example",
+            "status": "completed",
+            "latency_ms": result.node_execution_records[2].latency_ms,
+            "service_name": "risk_analyst",
+            "transport": "axl-mcp",
+            "dispatch_target": "/mcp/peer-risk-example/risk_analyst",
+        },
+    ]
