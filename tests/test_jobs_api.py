@@ -5,10 +5,17 @@ from uuid import UUID
 import httpx
 from httpx import ASGITransport
 
+from app.chain.receipts import ChainReceipt, JobChainReceipts
 from app.coordinator.service import CoordinatorDispatchResult
 from app.coordinator.synthesis import MemoSynthesisService
+from app.evaluation.reputation import build_reputation_updates
 from app.main import app
-from app.schemas.contracts import ScenarioView, SpecialistResponse, ThesisRequest
+from app.schemas.contracts import (
+    ScenarioView,
+    SpecialistResponse,
+    ThesisRequest,
+    VerificationAttestation,
+)
 from app.store import JobStore
 
 
@@ -76,6 +83,41 @@ class FailingLLMClient:
         raise RuntimeError("force fallback path")
 
 
+class StubChainReceiptService:
+    async def record_job_receipts(
+        self,
+        *,
+        job_id: str,
+        request: ThesisRequest,
+        dispatch_result: CoordinatorDispatchResult,
+        memo: object,
+    ) -> JobChainReceipts:
+        return JobChainReceipts(
+            receipt_status="confirmed",
+            receipts=[
+                ChainReceipt.confirmed(
+                    kind="task",
+                    tx_hash="0x" + "aa" * 32,
+                    explorer_base_url="https://gensyn-testnet.explorer.alchemy.com",
+                ),
+                *[
+                    ChainReceipt.confirmed(
+                        kind="contribution",
+                        role=response.node_role,
+                        tx_hash=f"0x{index:064x}",
+                        explorer_base_url=(
+                            "https://gensyn-testnet.explorer.alchemy.com"
+                        ),
+                    )
+                    for index, response in enumerate(
+                        dispatch_result.responses,
+                        start=1,
+                    )
+                ],
+            ],
+        )
+
+
 def _specialist_response(
     job_id: str,
     node_role: str,
@@ -106,6 +148,8 @@ def _configure_test_store(tmp_path: Path) -> None:
     app.state.memo_synthesis_service = MemoSynthesisService(
         llm_client=FailingLLMClient()
     )
+    if hasattr(app.state, "chain_receipt_service"):
+        delattr(app.state, "chain_receipt_service")
     asyncio.run(app.state.job_store.initialize())
 
 
@@ -206,3 +250,139 @@ def test_get_job_returns_persisted_result(tmp_path: Path) -> None:
         "narrative",
         "risk",
     ]
+
+
+def test_job_persists_chain_receipts(tmp_path: Path) -> None:
+    _configure_test_store(tmp_path)
+    app.state.chain_receipt_service = StubChainReceiptService()
+
+    async def _exercise() -> dict[str, object]:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            create_response = await client.post(
+                "/jobs",
+                json={
+                    "thesis": "ETH can rally on improving ETF flows.",
+                    "asset": "ETH",
+                    "horizon_days": 30,
+                },
+            )
+            job_id = create_response.json()["job_id"]
+            return (await client.get(f"/jobs/{job_id}")).json()
+
+    payload = asyncio.run(_exercise())
+    run_metadata = payload["run_metadata"]
+
+    assert run_metadata["receipt_status"] == "confirmed"
+    assert run_metadata["chain_receipts"] == [
+        {
+            "kind": "task",
+            "status": "confirmed",
+            "tx_hash": "0x" + "aa" * 32,
+            "explorer_url": (
+                "https://gensyn-testnet.explorer.alchemy.com/tx/" + "0x" + "aa" * 32
+            ),
+        },
+        {
+            "kind": "contribution",
+            "status": "confirmed",
+            "tx_hash": "0x" + "01".zfill(64),
+            "explorer_url": (
+                "https://gensyn-testnet.explorer.alchemy.com/tx/"
+                + "0x"
+                + "01".zfill(64)
+            ),
+            "role": "regime",
+        },
+        {
+            "kind": "contribution",
+            "status": "confirmed",
+            "tx_hash": "0x" + "02".zfill(64),
+            "explorer_url": (
+                "https://gensyn-testnet.explorer.alchemy.com/tx/"
+                + "0x"
+                + "02".zfill(64)
+            ),
+            "role": "narrative",
+        },
+        {
+            "kind": "contribution",
+            "status": "confirmed",
+            "tx_hash": "0x" + "03".zfill(64),
+            "explorer_url": (
+                "https://gensyn-testnet.explorer.alchemy.com/tx/"
+                + "0x"
+                + "03".zfill(64)
+            ),
+            "role": "risk",
+        },
+    ]
+
+
+def test_reputation_endpoint_returns_local_projection(tmp_path: Path) -> None:
+    _configure_test_store(tmp_path)
+
+    async def _exercise() -> dict[str, object]:
+        job = await app.state.job_store.create_job(
+            ThesisRequest(
+                thesis="ETH can rally on improving ETF flows.",
+                asset="ETH",
+                horizon_days=30,
+            )
+        )
+        memo = await MemoSynthesisService(llm_client=FailingLLMClient()).synthesize(
+            job_id=job.job_id,
+            request=ThesisRequest(
+                thesis="ETH can rally on improving ETF flows.",
+                asset="ETH",
+                horizon_days=30,
+            ),
+            dispatch_result=CoordinatorDispatchResult(
+                responses=[],
+                topology_snapshot={},
+                market_snapshot={},
+                news_headlines=[],
+            ),
+        )
+        await app.state.job_store.complete_job(
+            job_id=job.job_id,
+            memo=memo,
+            run_metadata={
+                "reputation_updates": [
+                    update.to_dict()
+                    for update in build_reputation_updates(
+                        [
+                            VerificationAttestation(
+                                job_id=job.job_id,
+                                node_role="regime",
+                                peer_id="peer-regime-test",
+                                status="accepted",
+                                score=0.9,
+                            )
+                        ]
+                    )
+                ]
+            },
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get("/reputation")).json()
+
+    payload = asyncio.run(_exercise())
+
+    assert payload == {
+        "leaderboard": [
+            {
+                "node_role": "regime",
+                "peer_id": "peer-regime-test",
+                "reputation_points": 90.0,
+                "accepted_contributions": 1,
+                "rejected_contributions": 0,
+                "total_verifier_score": 0.9,
+            }
+        ]
+    }

@@ -4,7 +4,13 @@ import time
 from app.axl.registry import AXLRegistry
 from app.config.settings import Settings
 from app.coordinator.service import CoordinatorService
-from app.schemas.contracts import ScenarioView, SpecialistResponse, ThesisRequest
+from app.schemas.contracts import (
+    ScenarioView,
+    SpecialistResponse,
+    TaskSpec,
+    ThesisRequest,
+    VerificationAttestation,
+)
 
 
 class StubAXLClient:
@@ -70,6 +76,33 @@ class StubNewsFeedProvider:
         ]
 
 
+class StubVerifier:
+    def __init__(self, *, reject_role: str | None = None) -> None:
+        self.reject_role = reject_role
+        self.calls: list[tuple[TaskSpec, list[str]]] = []
+
+    def verify_responses(
+        self,
+        *,
+        task: TaskSpec,
+        responses: list[SpecialistResponse],
+    ) -> list[VerificationAttestation]:
+        self.calls.append((task, [response.node_role for response in responses]))
+        return [
+            VerificationAttestation(
+                job_id=response.job_id,
+                node_role=response.node_role,
+                peer_id=response.peer_id,
+                status=(
+                    "rejected" if response.node_role == self.reject_role else "accepted"
+                ),
+                score=0.0 if response.node_role == self.reject_role else 0.8,
+                reasons=["stub_verifier"],
+            )
+            for response in responses
+        ]
+
+
 def test_coordinator_dispatches_and_collects_all_specialist_responses() -> None:
     axl_client = StubAXLClient()
     market_data_provider = StubMarketDataProvider()
@@ -105,6 +138,75 @@ def test_coordinator_dispatches_and_collects_all_specialist_responses() -> None:
     assert news_feed_provider.requests == [request]
     assert axl_client.dispatch_roles == ["regime", "narrative", "risk"]
     assert elapsed < 0.12
+
+
+def test_verifier_runs_before_synthesis() -> None:
+    axl_client = StubAXLClient()
+    verifier = StubVerifier()
+    service = CoordinatorService(
+        axl_client=axl_client,
+        registry=AXLRegistry(Settings()),
+        market_data_provider=StubMarketDataProvider(),
+        news_feed_provider=StubNewsFeedProvider(),
+        llm_client=object(),
+        verifier=verifier,
+    )
+    request = ThesisRequest(
+        thesis="ETH can extend higher on ETF demand.",
+        asset="ETH",
+        horizon_days=30,
+    )
+
+    result = asyncio.run(service.dispatch(job_id="job-verifier-order", request=request))
+
+    assert verifier.calls == [
+        (
+            TaskSpec(
+                job_id="job-verifier-order",
+                thesis="ETH can extend higher on ETF demand.",
+                asset="ETH",
+                horizon_days=30,
+            ),
+            ["regime", "narrative", "risk"],
+        )
+    ]
+    assert axl_client.dispatch_roles == ["regime", "narrative", "risk"]
+    assert len(result.responses) == 3
+    assert result.rejected_responses == []
+    assert [att.status for att in result.verification_attestations] == [
+        "accepted",
+        "accepted",
+        "accepted",
+    ]
+
+
+def test_coordinator_filters_rejected_specialist_responses() -> None:
+    verifier = StubVerifier(reject_role="risk")
+    service = CoordinatorService(
+        axl_client=StubAXLClient(),
+        registry=AXLRegistry(Settings()),
+        market_data_provider=StubMarketDataProvider(),
+        news_feed_provider=StubNewsFeedProvider(),
+        llm_client=object(),
+        verifier=verifier,
+    )
+    request = ThesisRequest(
+        thesis="ETH can extend higher on ETF demand.",
+        asset="ETH",
+        horizon_days=30,
+    )
+
+    result = asyncio.run(
+        service.dispatch(job_id="job-verifier-reject", request=request)
+    )
+
+    assert [response.node_role for response in result.responses] == [
+        "regime",
+        "narrative",
+    ]
+    assert [response.node_role for response in result.rejected_responses] == ["risk"]
+    assert result.partial is True
+    assert result.run_metadata["rejected_roles"] == ["risk"]
 
 
 def test_coordinator_dispatch_payloads_are_transport_safe() -> None:

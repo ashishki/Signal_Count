@@ -1,5 +1,6 @@
 import asyncio
 import json
+from dataclasses import replace
 
 from app.coordinator.service import CoordinatorDispatchResult
 from app.coordinator import synthesis as synthesis_module
@@ -10,6 +11,7 @@ from app.schemas.contracts import (
     ScenarioView,
     SpecialistResponse,
     ThesisRequest,
+    VerificationAttestation,
 )
 
 
@@ -82,6 +84,8 @@ def test_synthesis_returns_schema_valid_final_memo() -> None:
     assert memo.partial is False
     assert memo.partial_reason is None
     assert llm_client.calls[0][0] == "test-model"
+    assert "job_id: job-synthesis-1" in llm_client.calls[0][1][1]["content"]
+    assert "job_id: placeholder" not in llm_client.calls[0][1][1]["content"]
     assert metrics.counter_events[0].labels["outcome"] == "success"
     assert metrics.histogram_events[0].name == "memo_synthesis_latency_ms"
 
@@ -174,6 +178,36 @@ def test_synthesis_records_fallback_metrics() -> None:
     assert metrics.histogram_events[0].name == "memo_synthesis_latency_ms"
 
 
+def test_rejected_specialist_output_is_visible() -> None:
+    dispatch_result = _dispatch_result_with_rejected_response(
+        job_id="job-synthesis-rejected"
+    )
+
+    class FailingLLMClient:
+        async def complete(self, model: str, messages: list[dict[str, str]]) -> str:
+            raise RuntimeError("force fallback path")
+
+    memo = asyncio.run(
+        MemoSynthesisService(llm_client=FailingLLMClient()).synthesize(
+            job_id="job-synthesis-rejected",
+            request=ThesisRequest(
+                thesis="ETH remains supported by liquidity.",
+                asset="ETH",
+                horizon_days=21,
+            ),
+            dispatch_result=dispatch_result,
+        )
+    )
+
+    assert memo.partial is True
+    assert memo.partial_reason == "Rejected specialist roles: risk"
+    assert memo.verification_attestations[0].status == "rejected"
+    assert any(
+        item.startswith("Rejected risk output from peer-risk-test")
+        for item in memo.opposing_evidence
+    )
+
+
 def _dispatch_result(job_id: str) -> CoordinatorDispatchResult:
     return CoordinatorDispatchResult(
         responses=[
@@ -218,6 +252,38 @@ def _dispatch_result(job_id: str) -> CoordinatorDispatchResult:
         },
         market_snapshot={"price_return": 0.08},
         news_headlines=["ETF flows remain constructive"],
+    )
+
+
+def _dispatch_result_with_rejected_response(job_id: str) -> CoordinatorDispatchResult:
+    rejected = _specialist_response(
+        job_id=job_id,
+        node_role="risk",
+        peer_id="peer-risk-test",
+        timestamp="2026-04-23T00:02:00Z",
+        summary="A break below support invalidates the thesis.",
+        signals=["invalidation: support break"],
+        risks=["Macro volatility can pressure beta assets."],
+        scenario_view=ScenarioView(bull=0.30, base=0.45, bear=0.25),
+    )
+    result = _dispatch_result(job_id=job_id)
+    return replace(
+        result,
+        responses=[
+            response for response in result.responses if response.node_role != "risk"
+        ],
+        rejected_responses=[rejected],
+        verification_attestations=[
+            VerificationAttestation(
+                job_id=job_id,
+                node_role="risk",
+                peer_id="peer-risk-test",
+                status="rejected",
+                score=0.31,
+                reasons=["invalid_signature"],
+            )
+        ],
+        partial=True,
     )
 
 

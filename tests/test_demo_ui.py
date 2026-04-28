@@ -169,6 +169,173 @@ def test_home_page_handles_live_axl_topology_shape(tmp_path: Path) -> None:
     assert "axl-public-key-test" in response.text
 
 
+def test_home_page_renders_chain_receipt_status(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_chain_receipts(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    assert "receipt_status" in response.text
+    assert "confirmed" in response.text
+    assert "https://gensyn-testnet.explorer.alchemy.com/tx/0xabc123" in response.text
+
+
+def test_home_page_renders_graph_state(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_graph_state(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    assert "graph_state" in response.text
+    assert "regime / specialist / completed" in response.text
+    assert "risk / specialist / missing / optional" in response.text
+
+
+def test_home_page_renders_reputation_updates(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_reputation_updates(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    assert "reputation_updates" in response.text
+    assert "regime / peer-regime-test / accepted / 84.00 reputation" in response.text
+
+
+def test_home_page_renders_native_test_payout_receipt(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_native_test_payout(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    assert "native test payout" in response.text
+    assert "1000000000 wei" in response.text
+
+
+def test_trace_ledger_renders_receipts(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_trace_ledger(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Task Trace" in html
+    assert "peer-risk-test" in html
+    assert "0x00000000000000000000000000000000000000a1" in html
+    assert "0xabcdeabcdeabcd" in html
+    assert "validated" in html
+    assert "https://gensyn-testnet.explorer.alchemy.com/tx/0xtrace123" in html
+
+
+def test_home_page_renders_proof_console_layout(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_trace_ledger(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Signal Count Proof Console" in html
+    assert "Proof capabilities" in html
+    assert "Run Timeline" in html
+    assert "Agent Registry" in html
+    assert "Task Trace" in html
+    assert "Proof Details" in html
+    assert "Reputation Ledger" in html
+    assert "Indexed Events" in html
+    assert "job-memo" in html
+
+
+def test_proof_details_render_full_receipt_metadata(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_trace_ledger(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "risk / output_hash" in html
+    assert "0xabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcde" in html
+    assert "risk / attestation_hash" in html
+    assert "0xattestationhash000000000000000000000000000000000000000000000000" in html
+    assert "risk / verifier_signature" in html
+    assert "0xverifiersignature0000000000000000000000000000000000000000000000" in html
+    assert "risk / ree_receipt_hash" in html
+    assert (
+        "sha256:36ae72fccc5e179a6986d0af614546170ed60be0d0ab953e05978a10c7a9dcb3"
+        in html
+    )
+    assert "contribution / explorer_url" not in html
+    assert "https://gensyn-testnet.explorer.alchemy.com/tx/0xtrace123" in html
+
+
+def test_proof_console_wraps_long_identifiers(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_long_identifiers(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "overflow-wrap: anywhere" in html
+    assert "hash-chip" in html
+    assert "id-chip" in html
+    assert "peer-" + "a" * 96 in html
+    assert "0x" + "b" * 64 in html
+
+
 async def _configure_completed_job(tmp_path: Path) -> None:
     app.state.job_store = JobStore(database_url=f"sqlite:///{tmp_path / 'jobs.db'}")
     app.state.memo_synthesis_service = MemoSynthesisService(
@@ -228,6 +395,204 @@ async def _configure_completed_job(tmp_path: Path) -> None:
     )
 
 
+async def _configure_completed_job_with_graph_state(tmp_path: Path) -> None:
+    await _configure_completed_job(tmp_path)
+    latest_job = await app.state.job_store.get_latest_job()
+    assert latest_job is not None
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata["graph_state"] = {
+        "nodes": [
+            {
+                "id": "regime",
+                "type": "specialist",
+                "status": "completed",
+                "optional": False,
+            },
+            {
+                "id": "risk",
+                "type": "specialist",
+                "status": "missing",
+                "optional": True,
+            },
+        ],
+        "edges": [["regime", "verifier"], ["risk", "verifier"]],
+    }
+    await app.state.job_store.complete_job(
+        job_id=latest_job.job_id,
+        memo=FinalMemo.model_validate(latest_job.memo),
+        provenance_ledger=latest_job.provenance_ledger,
+        run_metadata=run_metadata,
+        topology_snapshot=latest_job.topology_snapshot,
+    )
+
+
+async def _configure_completed_job_with_reputation_updates(tmp_path: Path) -> None:
+    await _configure_completed_job(tmp_path)
+    latest_job = await app.state.job_store.get_latest_job()
+    assert latest_job is not None
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata["reputation_updates"] = [
+        {
+            "job_id": latest_job.job_id,
+            "node_role": "regime",
+            "peer_id": "peer-regime-test",
+            "verifier_status": "accepted",
+            "verifier_score": 0.84,
+            "reputation_points": 84.0,
+            "reason": "verifier_score_credit",
+        }
+    ]
+    await app.state.job_store.complete_job(
+        job_id=latest_job.job_id,
+        memo=FinalMemo.model_validate(latest_job.memo),
+        provenance_ledger=latest_job.provenance_ledger,
+        run_metadata=run_metadata,
+        topology_snapshot=latest_job.topology_snapshot,
+    )
+
+
+async def _configure_completed_job_with_native_test_payout(tmp_path: Path) -> None:
+    await _configure_completed_job(tmp_path)
+    latest_job = await app.state.job_store.get_latest_job()
+    assert latest_job is not None
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata.update(
+        {
+            "receipt_status": "confirmed",
+            "chain_receipts": [
+                {
+                    "kind": "reputation",
+                    "role": "risk",
+                    "status": "confirmed",
+                    "tx_hash": "0xpayout123",
+                    "explorer_url": (
+                        "https://gensyn-testnet.explorer.alchemy.com/tx/0xpayout123"
+                    ),
+                    "native_test_payout_wei": 1_000_000_000,
+                }
+            ],
+        }
+    )
+    await app.state.job_store.complete_job(
+        job_id=latest_job.job_id,
+        memo=FinalMemo.model_validate(latest_job.memo),
+        provenance_ledger=latest_job.provenance_ledger,
+        run_metadata=run_metadata,
+        topology_snapshot=latest_job.topology_snapshot,
+    )
+
+
+async def _configure_completed_job_with_trace_ledger(tmp_path: Path) -> None:
+    await _configure_completed_job(tmp_path)
+    latest_job = await app.state.job_store.get_latest_job()
+    assert latest_job is not None
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata.update(
+        {
+            "receipt_status": "confirmed",
+            "verification_attestations": [
+                {
+                    "job_id": latest_job.job_id,
+                    "node_role": "risk",
+                    "peer_id": "peer-risk-test",
+                    "status": "accepted",
+                    "score": 0.91,
+                    "reasons": ["receipt_status=validated"],
+                    "agent_wallet": "0x00000000000000000000000000000000000000a1",
+                    "output_hash": (
+                        "0xabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcde"
+                    ),
+                    "attestation_hash": (
+                        "0xattestationhash000000000000000000000000000000000000000000000000"
+                    ),
+                    "verifier_signature": (
+                        "0xverifiersignature0000000000000000000000000000000000000000000000"
+                    ),
+                    "ree_receipt_hash": (
+                        "sha256:36ae72fccc5e179a6986d0af614546170ed60be0d0ab953e05978a10c7a9dcb3"
+                    ),
+                    "receipt_status": "validated",
+                }
+            ],
+            "chain_receipts": [
+                {
+                    "kind": "contribution",
+                    "role": "risk",
+                    "status": "confirmed",
+                    "tx_hash": "0xtrace123",
+                    "explorer_url": (
+                        "https://gensyn-testnet.explorer.alchemy.com/tx/0xtrace123"
+                    ),
+                    "ree_receipt_hash": (
+                        "sha256:36ae72fccc5e179a6986d0af614546170ed60be0d0ab953e05978a10c7a9dcb3"
+                    ),
+                    "ree_status": "validated",
+                }
+            ],
+        }
+    )
+    await app.state.job_store.complete_job(
+        job_id=latest_job.job_id,
+        memo=FinalMemo.model_validate(latest_job.memo),
+        provenance_ledger=[
+            {
+                "node_role": "risk",
+                "peer_id": "peer-risk-test",
+                "service_name": "risk_analyst",
+                "transport": "axl-mcp",
+                "dispatch_target": "/mcp/peer-risk-test/risk_analyst",
+                "status": "completed",
+                "latency_ms": 22.5,
+            }
+        ],
+        run_metadata=run_metadata,
+        topology_snapshot=latest_job.topology_snapshot,
+    )
+
+
+async def _configure_completed_job_with_long_identifiers(tmp_path: Path) -> None:
+    await _configure_completed_job_with_trace_ledger(tmp_path)
+    latest_job = await app.state.job_store.get_latest_job()
+    assert latest_job is not None
+    long_peer = "peer-" + "a" * 96
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata["verification_attestations"] = [
+        {
+            "job_id": latest_job.job_id,
+            "node_role": "risk",
+            "peer_id": long_peer,
+            "status": "accepted",
+            "score": 0.91,
+            "agent_wallet": "0x00000000000000000000000000000000000000a1",
+            "output_hash": "0x" + "b" * 64,
+            "attestation_hash": "0x" + "c" * 64,
+            "verifier_signature": "0x" + "d" * 128,
+            "ree_receipt_hash": "sha256:" + "e" * 64,
+            "receipt_status": "validated",
+        }
+    ]
+    await app.state.job_store.complete_job(
+        job_id=latest_job.job_id,
+        memo=FinalMemo.model_validate(latest_job.memo),
+        provenance_ledger=[
+            {
+                "node_role": "risk",
+                "peer_id": long_peer,
+                "service_name": "risk_analyst",
+                "transport": "axl-mcp",
+                "dispatch_target": f"/mcp/{long_peer}/risk_analyst",
+                "status": "completed",
+                "latency_ms": 22.5,
+            }
+        ],
+        run_metadata=run_metadata,
+        topology_snapshot={
+            "local_peer_id": "peer-coordinator-test",
+            "peers": [long_peer],
+        },
+    )
+
+
 async def _configure_empty_store(tmp_path: Path) -> None:
     app.state.job_store = JobStore(database_url=f"sqlite:///{tmp_path / 'jobs.db'}")
     app.state.coordinator_service = StubCoordinator()
@@ -257,4 +622,89 @@ async def _configure_completed_job_with_axl_topology(tmp_path: Path) -> None:
                 }
             ],
         },
+    )
+
+
+async def _configure_completed_job_with_chain_receipts(tmp_path: Path) -> None:
+    await _configure_completed_job(tmp_path)
+    latest_job = await app.state.job_store.get_latest_job()
+    assert latest_job is not None
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata.update(
+        {
+            "receipt_status": "confirmed",
+            "chain_receipts": [
+                {
+                    "kind": "task",
+                    "status": "confirmed",
+                    "tx_hash": "0xabc123",
+                    "explorer_url": (
+                        "https://gensyn-testnet.explorer.alchemy.com/tx/0xabc123"
+                    ),
+                }
+            ],
+        }
+    )
+    await app.state.job_store.complete_job(
+        job_id=latest_job.job_id,
+        memo=FinalMemo.model_validate(latest_job.memo),
+        provenance_ledger=latest_job.provenance_ledger,
+        run_metadata=run_metadata,
+        topology_snapshot=latest_job.topology_snapshot,
+    )
+
+
+def test_home_page_renders_ree_receipt_status_on_contribution(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_ree_receipts(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "receipt_status" in html
+    assert "confirmed" in html
+    assert "https://gensyn-testnet.explorer.alchemy.com/tx/0xcontrib456" in html
+    assert "ree-status" in html
+    assert "validated" in html
+    assert "0xc90e11f80d66bd" in html
+
+
+async def _configure_completed_job_with_ree_receipts(tmp_path: Path) -> None:
+    await _configure_completed_job(tmp_path)
+    latest_job = await app.state.job_store.get_latest_job()
+    assert latest_job is not None
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata.update(
+        {
+            "receipt_status": "confirmed",
+            "chain_receipts": [
+                {
+                    "kind": "contribution",
+                    "role": "risk",
+                    "status": "confirmed",
+                    "tx_hash": "0xcontrib456",
+                    "explorer_url": (
+                        "https://gensyn-testnet.explorer.alchemy.com/tx/0xcontrib456"
+                    ),
+                    "ree_receipt_hash": (
+                        "0xc90e11f80d66bd541821f6c465c14f99fad76c041731dd5922309880d374f498"
+                    ),
+                    "ree_status": "validated",
+                }
+            ],
+        }
+    )
+    await app.state.job_store.complete_job(
+        job_id=latest_job.job_id,
+        memo=FinalMemo.model_validate(latest_job.memo),
+        provenance_ledger=latest_job.provenance_ledger,
+        run_metadata=run_metadata,
+        topology_snapshot=latest_job.topology_snapshot,
     )
