@@ -1,3 +1,5 @@
+"""Narrative specialist service driven by structured LLM output."""
+
 from __future__ import annotations
 
 import json
@@ -53,6 +55,7 @@ class NarrativeService:
             confidence=self._coerce_confidence(parsed.get("confidence")),
             citations=headlines,
             timestamp=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            agent_wallet=self._settings.node_wallet_address or None,
         )
 
     def _build_messages(self, headlines: list[str]) -> list[dict[str, str]]:

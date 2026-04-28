@@ -1,3 +1,5 @@
+"""Deterministic local-bridge client for AXL routes."""
+
 from __future__ import annotations
 
 import asyncio
@@ -77,7 +79,10 @@ class AXLClient:
             method="POST",
         )
         try:
-            with urlopen(request, timeout=30) as response:  # noqa: S310
+            with urlopen(
+                request,
+                timeout=self._settings.axl_dispatch_timeout_seconds,
+            ) as response:  # noqa: S310
                 response_payload = json.loads(response.read().decode("utf-8"))
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise RuntimeError("AXL specialist dispatch failed") from exc

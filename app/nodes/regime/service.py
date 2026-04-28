@@ -1,3 +1,5 @@
+"""Deterministic regime specialist service."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -57,6 +59,7 @@ class RegimeService:
             confidence=confidence,
             citations=[],
             timestamp=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            agent_wallet=self._settings.node_wallet_address or None,
         )
 
     def _build_scenario_view(self, snapshot: RegimeSnapshot) -> ScenarioView:
