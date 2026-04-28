@@ -1,3 +1,5 @@
+"""Final memo synthesis service."""
+
 from __future__ import annotations
 
 import json
@@ -9,8 +11,10 @@ from pydantic import ValidationError
 from app.coordinator.service import CoordinatorDispatchResult
 from app.observability.metrics import get_metrics
 from app.observability.tracing import get_tracer
+from app.identity.hashing import canonical_json_hash
 from app.schemas.contracts import (
     FinalMemo,
+    MemoEvidenceSource,
     ProvenanceRecord,
     ScenarioView,
     SpecialistResponse,
@@ -23,6 +27,8 @@ class MemoLLMClient(Protocol):
 
 
 class MemoSynthesisService:
+    """Combine specialist responses into a schema-valid final memo."""
+
     def __init__(
         self,
         llm_client: MemoLLMClient,
@@ -43,10 +49,12 @@ class MemoSynthesisService:
         started_at = perf_counter()
         provenance = self._build_provenance(dispatch_result.responses)
         normalized_thesis = self._normalize_forecast_question(request)
-        partial_reason = self._build_partial_reason(dispatch_result.missing_roles)
+        partial = dispatch_result.partial or bool(dispatch_result.rejected_responses)
+        partial_reason = self._build_partial_reason(dispatch_result)
 
         try:
             llm_text = await self._call_llm(
+                job_id=job_id,
                 request=request,
                 responses=dispatch_result.responses,
                 normalized_thesis=normalized_thesis,
@@ -56,8 +64,9 @@ class MemoSynthesisService:
                 job_id=job_id,
                 normalized_thesis=normalized_thesis,
                 provenance=provenance,
-                partial=dispatch_result.partial,
+                partial=partial,
                 partial_reason=partial_reason,
+                dispatch_result=dispatch_result,
             )
             counter.add(1.0, operation="memo.synthesize", outcome="success")
         except (ValidationError, ValueError, TypeError, RuntimeError):
@@ -66,8 +75,9 @@ class MemoSynthesisService:
                 normalized_thesis=normalized_thesis,
                 responses=dispatch_result.responses,
                 provenance=provenance,
-                partial=dispatch_result.partial,
+                partial=partial,
                 partial_reason=partial_reason,
+                dispatch_result=dispatch_result,
             )
             counter.add(1.0, operation="memo.synthesize", outcome="fallback")
         except Exception:
@@ -83,6 +93,7 @@ class MemoSynthesisService:
 
     async def _call_llm(
         self,
+        job_id: str,
         request: ThesisRequest,
         responses: list[SpecialistResponse],
         normalized_thesis: str,
@@ -92,6 +103,7 @@ class MemoSynthesisService:
             return await self._llm_client.complete(
                 model=self._model,
                 messages=self._build_messages(
+                    job_id=job_id,
                     request=request,
                     responses=responses,
                     normalized_thesis=normalized_thesis,
@@ -100,6 +112,7 @@ class MemoSynthesisService:
 
     def _build_messages(
         self,
+        job_id: str,
         request: ThesisRequest,
         responses: list[SpecialistResponse],
         normalized_thesis: str,
@@ -128,6 +141,8 @@ class MemoSynthesisService:
             {
                 "role": "user",
                 "content": (
+                    # Thesis text is model input for the synthesis task only; it
+                    # is not copied into logs, span attributes, or metrics.
                     "Synthesize one final memo from these specialist outputs. "
                     "Use concise bullets for catalysts, risks, and invalidation "
                     "triggers. Return keys: job_id, normalized_thesis, scenarios, "
@@ -135,7 +150,7 @@ class MemoSynthesisService:
                     "invalidation_triggers, confidence_rationale, provenance, "
                     "partial, partial_reason. The scenarios object must contain "
                     "bull, base, and bear numeric weights.\n"
-                    f"job_id: placeholder\n"
+                    f"job_id: {job_id}\n"
                     f"asset: {request.asset}\n"
                     f"horizon_days: {request.horizon_days}\n"
                     f"normalized_thesis: {normalized_thesis}\n"
@@ -153,11 +168,26 @@ class MemoSynthesisService:
         provenance: list[ProvenanceRecord],
         partial: bool,
         partial_reason: str | None,
+        dispatch_result: CoordinatorDispatchResult,
     ) -> FinalMemo:
         payload = self._load_json_object(llm_text)
         payload["job_id"] = job_id
         payload["normalized_thesis"] = normalized_thesis
         payload["provenance"] = [record.model_dump() for record in provenance]
+        payload["verification_attestations"] = [
+            attestation.model_dump()
+            for attestation in dispatch_result.verification_attestations
+        ]
+        payload["evidence_sources"] = [
+            source.model_dump()
+            for source in self._evidence_sources(dispatch_result.responses)
+        ]
+        payload["opposing_evidence"] = self._compact_unique(
+            [
+                *payload.get("opposing_evidence", []),
+                *self._rejected_evidence(dispatch_result),
+            ]
+        )
         payload["partial"] = partial
         payload["partial_reason"] = partial_reason
         return FinalMemo.model_validate(payload)
@@ -180,13 +210,19 @@ class MemoSynthesisService:
         provenance: list[ProvenanceRecord],
         partial: bool,
         partial_reason: str | None,
+        dispatch_result: CoordinatorDispatchResult,
     ) -> FinalMemo:
         return FinalMemo(
             job_id=job_id,
             normalized_thesis=normalized_thesis,
             scenarios=self._average_scenarios(responses),
             supporting_evidence=self._supporting_evidence(responses),
-            opposing_evidence=self._opposing_evidence(responses),
+            opposing_evidence=self._compact_unique(
+                [
+                    *self._opposing_evidence(responses),
+                    *self._rejected_evidence(dispatch_result),
+                ]
+            ),
             catalysts=self._compact_unique(
                 signal for response in responses for signal in response.signals
             ),
@@ -200,6 +236,8 @@ class MemoSynthesisService:
             ],
             confidence_rationale=self._confidence_rationale(responses, partial),
             provenance=provenance,
+            evidence_sources=self._evidence_sources(responses),
+            verification_attestations=dispatch_result.verification_attestations,
             partial=partial,
             partial_reason=partial_reason,
         )
@@ -263,6 +301,25 @@ class MemoSynthesisService:
             for item in [response.summary, *response.risks]
         )
 
+    def _evidence_sources(
+        self,
+        responses: list[SpecialistResponse],
+    ) -> list[MemoEvidenceSource]:
+        sources: list[MemoEvidenceSource] = []
+        for response in responses:
+            output_hash = canonical_json_hash(response)
+            for item in [response.summary, *response.signals, *response.risks]:
+                if item.strip():
+                    sources.append(
+                        MemoEvidenceSource(
+                            text=item,
+                            source_role=response.node_role,
+                            peer_id=response.peer_id,
+                            output_hash=output_hash,
+                        )
+                    )
+        return sources
+
     def _confidence_rationale(
         self,
         responses: list[SpecialistResponse],
@@ -279,10 +336,41 @@ class MemoSynthesisService:
             f"{coverage} represented in the memo."
         )
 
-    def _build_partial_reason(self, missing_roles: list[str]) -> str | None:
-        if not missing_roles:
+    def _rejected_evidence(
+        self,
+        dispatch_result: CoordinatorDispatchResult,
+    ) -> list[str]:
+        attestation_by_role = {
+            attestation.node_role: attestation
+            for attestation in dispatch_result.verification_attestations
+        }
+        return [
+            (
+                f"Rejected {response.node_role} output from {response.peer_id}: "
+                f"{response.summary} "
+                f"(score={attestation_by_role[response.node_role].score:.2f}; "
+                f"reasons={', '.join(attestation_by_role[response.node_role].reasons)})"
+            )
+            for response in dispatch_result.rejected_responses
+            if response.node_role in attestation_by_role
+        ]
+
+    def _build_partial_reason(
+        self,
+        dispatch_result: CoordinatorDispatchResult,
+    ) -> str | None:
+        missing_roles = dispatch_result.missing_roles
+        rejected_roles = [
+            response.node_role for response in dispatch_result.rejected_responses
+        ]
+        if not missing_roles and not rejected_roles:
             return None
-        return f"Missing specialist roles: {', '.join(missing_roles)}"
+        reasons = []
+        if missing_roles:
+            reasons.append(f"Missing specialist roles: {', '.join(missing_roles)}")
+        if rejected_roles:
+            reasons.append(f"Rejected specialist roles: {', '.join(rejected_roles)}")
+        return "; ".join(reasons)
 
 
 def _elapsed_ms(started_at: float) -> float:

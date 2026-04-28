@@ -1,3 +1,5 @@
+"""Coordinator dispatch workflow for specialist fan-out."""
+
 from __future__ import annotations
 
 import asyncio
@@ -6,10 +8,19 @@ from time import perf_counter
 from typing import Any, Protocol
 
 from app.axl.registry import AXLRegistry
+from app.evaluation.reputation import build_reputation_updates
 from app.integrations.market_data import MarketDataProvider
 from app.integrations.news_feed import NewsFeedProvider
 from app.observability.provenance import NodeExecutionRecord
-from app.schemas.contracts import SpecialistResponse, ThesisRequest
+from app.orchestration.executor import ExecutionPlan, GraphExecutor
+from app.orchestration.graph import DEFAULT_WORKFLOW_GRAPH, WorkflowGraph
+from app.orchestration.state import build_graph_state
+from app.schemas.contracts import (
+    SpecialistResponse,
+    TaskSpec,
+    ThesisRequest,
+    VerificationAttestation,
+)
 
 
 class AXLTransport(Protocol):
@@ -23,12 +34,25 @@ class AXLTransport(Protocol):
     ) -> SpecialistResponse: ...
 
 
+class ResponseVerifier(Protocol):
+    def verify_responses(
+        self,
+        *,
+        task: TaskSpec,
+        responses: list[SpecialistResponse],
+    ) -> list[VerificationAttestation]: ...
+
+
 @dataclass(frozen=True)
 class CoordinatorDispatchResult:
     responses: list[SpecialistResponse]
     topology_snapshot: dict[str, Any]
     market_snapshot: dict[str, Any]
     news_headlines: list[str]
+    rejected_responses: list[SpecialistResponse] = field(default_factory=list)
+    verification_attestations: list[VerificationAttestation] = field(
+        default_factory=list
+    )
     run_metadata: dict[str, Any] = field(default_factory=dict)
     node_execution_records: list[NodeExecutionRecord] = field(default_factory=list)
     partial: bool = False
@@ -49,12 +73,18 @@ class CoordinatorService:
         market_data_provider: MarketDataProvider,
         news_feed_provider: NewsFeedProvider,
         llm_client: Any,
+        verifier: ResponseVerifier | None = None,
+        workflow_graph: WorkflowGraph = DEFAULT_WORKFLOW_GRAPH,
     ) -> None:
         self._axl_client = axl_client
         self._registry = registry
         self._market_data_provider = market_data_provider
         self._news_feed_provider = news_feed_provider
         self._llm_client = llm_client
+        self._verifier = verifier
+        self._workflow_graph = workflow_graph
+        self._graph_executor = GraphExecutor(workflow_graph)
+        self._execution_plan = self._graph_executor.build_plan()
 
     async def dispatch(
         self,
@@ -66,7 +96,7 @@ class CoordinatorService:
         market_snapshot = await self._market_data_provider.fetch_snapshot(request)
         news_headlines = await self._news_feed_provider.fetch_headlines(request)
 
-        roles = ("regime", "narrative", "risk")
+        roles = self._execution_plan.specialist_roles
         results = await asyncio.gather(
             *[
                 self._dispatch_role(
@@ -91,8 +121,21 @@ class CoordinatorService:
                 continue
             responses.append(result.response)
 
+        rejected_responses: list[SpecialistResponse] = []
+        verification_attestations: list[VerificationAttestation] = []
+        if self._verifier is not None:
+            responses, rejected_responses, verification_attestations = (
+                self._verify_responses(
+                    job_id=job_id,
+                    request=request,
+                    responses=responses,
+                )
+            )
+
         return CoordinatorDispatchResult(
             responses=responses,
+            rejected_responses=rejected_responses,
+            verification_attestations=verification_attestations,
             topology_snapshot=topology_snapshot,
             market_snapshot=market_snapshot,
             news_headlines=news_headlines,
@@ -100,11 +143,55 @@ class CoordinatorService:
                 run_mode=run_mode,
                 records=node_execution_records,
                 missing_roles=missing_roles,
+                verification_attestations=verification_attestations,
+                execution_plan=self._execution_plan,
+                verifier_ran=(
+                    self._verifier is not None
+                    and self._execution_plan.verifier_node_id is not None
+                ),
+                synthesis_ran=self._execution_plan.synthesis_node_id is not None,
             ),
             node_execution_records=node_execution_records,
-            partial=bool(missing_roles),
+            partial=bool(missing_roles or rejected_responses),
             missing_roles=missing_roles,
         )
+
+    def _verify_responses(
+        self,
+        *,
+        job_id: str,
+        request: ThesisRequest,
+        responses: list[SpecialistResponse],
+    ) -> tuple[
+        list[SpecialistResponse],
+        list[SpecialistResponse],
+        list[VerificationAttestation],
+    ]:
+        if self._verifier is None:
+            return responses, [], []
+
+        task = TaskSpec(
+            job_id=job_id,
+            thesis=request.thesis,
+            asset=request.asset,
+            horizon_days=request.horizon_days,
+        )
+        attestations = self._verifier.verify_responses(
+            task=task,
+            responses=responses,
+        )
+        attestation_by_role = {
+            attestation.node_role: attestation for attestation in attestations
+        }
+        accepted: list[SpecialistResponse] = []
+        rejected: list[SpecialistResponse] = []
+        for response in responses:
+            attestation = attestation_by_role.get(response.node_role)
+            if attestation is not None and attestation.status == "accepted":
+                accepted.append(response)
+            else:
+                rejected.append(response)
+        return accepted, rejected, attestations
 
     async def _dispatch_role(
         self,
@@ -203,14 +290,43 @@ class CoordinatorService:
         run_mode: str,
         records: list[NodeExecutionRecord],
         missing_roles: list[str],
+        verification_attestations: list[VerificationAttestation],
+        execution_plan: ExecutionPlan,
+        verifier_ran: bool,
+        synthesis_ran: bool,
     ) -> dict[str, Any]:
+        completed_roles = [
+            record.node_role for record in records if record.status == "completed"
+        ]
+        rejected_roles = [
+            attestation.node_role
+            for attestation in verification_attestations
+            if attestation.status == "rejected"
+        ]
+        graph_state = build_graph_state(
+            graph=self._workflow_graph,
+            completed_roles=completed_roles,
+            missing_roles=missing_roles,
+            rejected_roles=rejected_roles,
+            verifier_ran=verifier_ran,
+            synthesis_ran=synthesis_ran,
+        )
         metadata: dict[str, Any] = {
             "run_mode": run_mode,
             "expected_roles": [record.node_role for record in records],
-            "completed_roles": [
-                record.node_role for record in records if record.status == "completed"
-            ],
+            "completed_roles": completed_roles,
             "missing_roles": missing_roles,
+            "rejected_roles": rejected_roles,
+            "verification_attestations": [
+                attestation.model_dump() for attestation in verification_attestations
+            ],
+            "reputation_updates": [
+                update.to_dict()
+                for update in build_reputation_updates(verification_attestations)
+            ],
+            "execution_plan": execution_plan.to_dict(),
+            "workflow_graph": self._workflow_graph.to_dict(),
+            "graph_state": graph_state.to_dict(),
             "dispatch_targets": [
                 record.dispatch_target for record in records if record.dispatch_target
             ],
