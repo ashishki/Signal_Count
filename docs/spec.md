@@ -13,7 +13,7 @@ conversational answer.
 | Role | Capabilities |
 | --- | --- |
 | Operator | Submit a thesis, view job progress, inspect final memo, replay a demo thesis |
-| Judge / viewer | Observe node participation, topology evidence, and final memo artifact |
+| Judge / viewer | Observe node participation, topology evidence, proof ledger, and final memo artifact |
 
 ## Feature Area 1 — Thesis Intake
 
@@ -100,18 +100,65 @@ Out of scope:
 
 ## Feature Area 5 — Demo Operator View
 
-Provide a minimal operator screen that makes thesis input, node participation,
-topology evidence, and final memo easy to understand.
+Provide an operator screen that makes thesis input, node participation,
+topology evidence, proof status, and final memo easy to understand.
 
 Acceptance criteria:
 
 - The operator can submit a thesis from a simple web form.
-- The operator can see node-role participation and final memo output in one
-  place.
+- The operator can see node-role participation, proof status, and final memo
+  output in one place.
 - A demo fixture can be replayed without depending on unstable live data.
 
 Out of scope:
 
-- Polished dashboarding.
-- Rich charts.
+- Portfolio dashboarding.
+- Decorative charts that do not explain the proof path.
 - User management or saved portfolios.
+
+## Feature Area 5A — Proof Console UX
+
+Upgrade the demo operator view into a proof-first console for judges and
+operators.
+
+Acceptance criteria:
+
+- The first completed-run screen shows command controls, current mode, proof
+  capability state, mesh visualization, run timeline, task trace, final memo,
+  and reputation/indexed event context.
+- Agent rows show role, service, AXL peer ID, wallet, status, and reputation
+  when available.
+- Proof details expose full hashes, verifier signature metadata, REE receipt
+  status, and explorer links without crowding the memo.
+- Long peer IDs, hashes, and tx links wrap or truncate predictably without
+  overlapping adjacent UI.
+- Offline preview, live AXL, REE, chain receipt, and indexed-chain facts are
+  labelled truthfully.
+- The full battle script can produce readable terminal logs for video capture
+  and a plain-text summary for evidence review.
+
+Out of scope:
+
+- Marketing landing page redesign.
+- Decorative charts that do not improve proof comprehension.
+- Hiding proof details behind unsupported claims or ambiguous badges.
+
+## Feature Area 6 — Proof and Recovery Layer
+
+Make the proof path inspectable without requiring judges to read raw JSON.
+
+Acceptance criteria:
+
+- Each completed run can expose AXL peer, wallet, output hash, verifier status,
+  REE receipt status, and tx link metadata when available.
+- Memo evidence bullets can be traced back to accepted specialist output hashes.
+- Chain receipt events can be indexed into a local projection after restart.
+- Duplicate event replay does not duplicate indexed facts.
+- The indexer records failure status and repairs a configured shallow reorg
+  window.
+
+Out of scope:
+
+- Claiming REE or Gensyn Testnet evidence for offline preview fixtures.
+- Full archival reorg rollback beyond the configured repair window.
+- ERC20, USDC, stablecoin, or real-money rewards.

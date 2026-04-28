@@ -25,22 +25,42 @@ AXL peer services
   |-- Narrative analyst
   |-- Risk analyst
   |
+Verifier
+  |
 Memo synthesis
   |
 SQLite job store + provenance ledger
 ```
 
+## Demo Runtime
+
+`scripts/run_full_battle_demo.sh` is the one-command presentation path. It
+starts the local two-node AXL mesh, MCP router, specialist services, coordinator
+app, REE-enabled risk path, Gensyn Testnet receipt writes, capped native
+test-ETH payouts, and one-shot indexer. It prints sectioned terminal logs for
+video capture and writes a plain summary to `.runtime/full-battle/summary.txt`.
+
+The web viewer remains available at `http://127.0.0.1:8004` after the run so
+the proof console can be captured from the completed job state.
+
 ## Main Components
 
 | Component | Location | Responsibility |
 | --- | --- | --- |
-| API | `app/api/` | Health, job submission, demo page routes |
+| API | `app/api/` | Health, job submission, demo page routes, proof-console evidence display |
 | AXL client | `app/axl/` | Local bridge calls, peer/service addressing, topology fetch |
+| Chain integration | `app/chain/` | Gensyn Testnet transaction builders, receipt/reputation metadata, and capped native test payouts |
 | Coordinator | `app/coordinator/` | Fetch context, fan out specialist calls, collect responses |
+| Evaluation | `app/evaluation/` | Verifier scoring, attestation hashing, wallet attribution, and reputation projection |
+| Event indexer | `app/indexer/` | Gensyn Testnet event decoding and local indexed-chain projections |
 | Specialist services | `app/nodes/` | Regime, narrative, and risk analysis |
+| Verifier service | `app/nodes/verifier/` | Signed execution checks and deterministic verifier attestations |
+| REE integration | `app/ree/` | Gensyn REE subprocess runner, receipt parsing, and hash validation |
+| Orchestration | `app/orchestration/` | Declared workflow graph and serializable per-node graph state |
 | Schemas | `app/schemas/` | Pydantic request, response, memo, and provenance contracts |
 | Persistence | `app/store/` | SQLite job and memo storage |
-| Rendering | `app/rendering/` | HTML rendering for the demo memo |
+| Rendering | `app/rendering/` | HTML rendering for the demo memo and specialist evidence source metadata |
+| Operator UI | `app/templates/` | Proof console shell, thesis form, mesh visualization, latest-run tabs, and responsive evidence layout |
 | Observability | `app/observability/` | Tracing, metrics, node execution records |
 
 ## AXL Integration Boundary
@@ -62,6 +82,30 @@ objects such as Python LLM client instances stay inside the receiving process.
 This matters because the live AXL path serializes requests over HTTP; an
 in-process object in the payload would work only in a fake local workflow and
 fail through the real bridge.
+
+## Event Indexer
+
+Phase 9 adds a local chain-event projection path beside job metadata. Indexed
+events are stored in SQLite as `indexed_chain_events` with
+`transaction_hash:log_index` as the idempotency key. Indexed blocks and the
+polling cursor are stored separately, so replay, restart, and shallow reorg
+repair do not mutate local-only job metadata. Projection rows are explicitly
+labelled `source=indexed_chain`, separate from local-only `run_metadata`.
+
+The indexer decodes the current Signal Count contract events:
+
+- `TaskCreated`
+- `TaskFinalized`
+- `ContributionRecorded`
+- `VerificationRecorded`
+- `ReputationRecorded`
+
+The projection can rebuild task finalization state, contribution/verification
+receipt facts, and an agent reputation leaderboard from events after an app
+restart. The scheduler polls `latest - confirmations`, stores block hashes, and
+repairs a configured recent window if a stored block hash changes. Replay is
+idempotent. Full archival rollback beyond the configured repair window is not
+claimed.
 
 The single-node live verification proves:
 
@@ -111,6 +155,21 @@ POST {AXL_MCP_ROUTER_URL}/register
 The same server binary is used for all three roles by changing environment
 variables such as `NODE_ROLE`, `NODE_SERVICE_NAME`, and `NODE_PUBLIC_URL`.
 
+## Workflow Graph
+
+The coordinator uses a declared workflow graph rather than a hidden role list:
+
+```text
+regime    -> verifier
+narrative -> verifier -> synthesis
+risk      -> verifier
+```
+
+The graph is finite and acyclic. Each run stores both the declared graph and
+per-node graph state in `run_metadata`, so the UI can distinguish completed,
+missing, rejected, skipped, and pending nodes without changing the `/jobs`
+contract.
+
 ## Specialist Roles
 
 | Role | Purpose |
@@ -132,7 +191,13 @@ The final memo contains:
 - invalidation triggers
 - confidence rationale
 - specialist provenance
+- specialist evidence source hashes for supporting and opposing evidence
+- verifier attestations
 - partial-run warning when a role is unavailable
+
+Rejected specialist output is not silently discarded. The verifier records an
+attestation, the coordinator keeps rejected responses separate from accepted
+responses, and synthesis surfaces rejected output in opposing evidence.
 
 ## Non-Goals
 

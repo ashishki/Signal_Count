@@ -152,22 +152,94 @@ This proves a local multi-peer AXL mesh with distinct peer identities. It is
 stronger than the single-node bridge demo, but it is still a local same-machine
 mesh unless run across separate machines.
 
+## Full Battle Demo
+
+Use this path for the recorded terminal segment. It runs the full stack in one
+script and prints video-friendly logs with sections for preflight, AXL mesh,
+specialist services, app startup, live job submission, indexer, evidence
+summary, and shutdown instructions.
+
+```bash
+scripts/run_full_battle_demo.sh
+```
+
+The script uses:
+
+- Local two-node AXL mesh.
+- MCP router and three specialist services.
+- Coordinator app on `http://127.0.0.1:8004`.
+- Gensyn REE for the risk specialist path.
+- Gensyn Testnet task/contribution/reputation receipts.
+- Tiny capped native test-ETH payouts of `1000000000 wei` per role by default.
+- One-shot chain indexer after the run completes.
+
+Artifacts are written under:
+
+```text
+.runtime/full-battle/
+```
+
+Important files:
+
+- `summary.txt` - plain-text run summary without terminal color codes.
+- `job.json` - completed job immediately after submission.
+- `job-after-indexer.json` - job fetched after the indexer run.
+- `index-after-indexer.html` - rendered proof console after indexing.
+- `logs/` - per-process logs.
+
+The script leaves the viewer running for screen capture. Stop all demo processes
+after recording:
+
+```bash
+scripts/stop_full_battle_demo.sh
+```
+
+Current verified full-battle reference run:
+
+- Job ID: `f9f1f7ca-26c4-4314-aafd-4659adbcf028`.
+- Runtime: `767s`.
+- Roles: `regime`, `narrative`, and `risk` completed.
+- REE status: `validated`.
+- Chain receipts: 7 transaction receipts.
+- Indexer: 7 chain events indexed into the local projection.
+
 ## Screenshot Set
 
-Capture these six screenshots in order:
+Capture these screenshots in order:
 
 1. Home and thesis input.
 2. Filled thesis form.
 3. Latest completed job with `partial=false`.
 4. Scenario table.
 5. Risks and invalidation conditions.
-6. Run evidence, dispatch targets, and topology public keys.
+6. Memo evidence bullets with visible source metadata.
+7. `Task Trace` ledger with AXL peer, wallet, output hash, REE status, and tx
+   link if chain receipts are configured.
+8. Run evidence, dispatch targets, and topology public keys.
+9. Reputation/test payout receipt evidence if enabled for testnet.
+10. Proof console hero, mesh visualization, capability strip, and tabbed latest
+    run panel.
 
 ## Video Structure
 
 - 0:00-0:20: what Signal Count does.
 - 0:20-0:50: show AXL topology and specialist services.
-- 0:50-1:40: submit or replay a thesis.
-- 1:40-2:40: show final memo.
-- 2:40-3:30: show run evidence and node participation.
-- 3:30-4:00: explain why it is decision support, not a trading bot.
+- 0:50-1:40: show the full battle terminal logs while the live job runs.
+- 1:40-2:30: show final memo and source-linked evidence.
+- 2:30-3:20: show `Task Trace`, REE receipt status, explorer links, and
+  reputation evidence.
+- 3:20-3:45: show event-indexed projection/recovery behavior if using the
+  indexer in the demo.
+- 3:45-4:00: explain why it is decision support, not a trading bot.
+
+## Claim Boundaries
+
+- Offline preview is only for stable UI capture and must stay labelled as
+  `offline-demo-preview`.
+- Same-machine multi-peer AXL mesh proves distinct local AXL peer identities,
+  not remote multi-machine deployment.
+- REE should be described as present only when a real receipt exists for the
+  run being shown.
+- Gensyn Testnet receipt claims require real tx hashes or explorer links.
+- Native test-ETH payouts are tiny, capped, opt-in testnet evidence; do not
+  describe them as stablecoin or real-money rewards.

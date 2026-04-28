@@ -10,10 +10,17 @@ and provenance.
 
 ## What It Does
 
-- Accepts a single market thesis through a FastAPI API or minimal demo UI.
+- Accepts a single market thesis through a FastAPI API or proof-console UI.
 - Routes work to specialist roles for regime, narrative, and risk analysis.
 - Records node participation, peer IDs, latency, and topology snapshots.
+- Scores specialist outputs through a verifier and records deterministic
+  attestation hashes.
+- Can attach a real Gensyn REE receipt to the risk specialist path.
+- Can record task, contribution, and reputation receipt metadata on Gensyn
+  Testnet when chain writing is configured.
 - Produces a structured memo instead of a generic chat response.
+- Renders an operator proof console with AXL peer, wallet, output hash, REE
+  status, explorer links, indexed chain facts, and a source-linked memo.
 - Degrades explicitly when a specialist is unavailable.
 
 ## Why AXL
@@ -45,6 +52,8 @@ AXL specialist peers
   |-- Narrative analyst
   |-- Risk analyst
   |
+Verifier
+  |
 Memo synthesis + provenance ledger
 ```
 
@@ -54,16 +63,21 @@ Memo synthesis + provenance ledger
 app/
   api/              FastAPI routes
   axl/              AXL registry and client layer
+  chain/            Gensyn Testnet transaction and receipt/reputation helpers
   coordinator/      Dispatch and memo synthesis workflow
+  evaluation/       Verifier scoring, attestation, and reputation helpers
   integrations/     LLM, market data, and news adapters
   nodes/            Specialist service implementations
+  ree/              Gensyn REE runner and receipt validation
   observability/    Metrics, tracing, provenance records
+  orchestration/    Declared workflow graph and per-node graph state
   rendering/        Memo rendering
   schemas/          Pydantic contracts
   store/            SQLite-backed job store
-  templates/        Minimal demo UI
+  templates/        Proof-console UI
 docs/
   ARCHITECTURE.md   Public architecture notes
+  final-submission.md Final claim/evidence checklist
   spec.md           Product specification
 tests/              Unit and integration tests
 ```
@@ -218,6 +232,92 @@ In this mode the coordinator uses Node A as its local bridge
 specialist dispatch at Node B's public key. This demonstrates separate AXL peer
 identities without claiming a remote multi-machine deployment.
 
+### Full Battle Demo Script
+
+For the video-ready path, use the full battle runner:
+
+```bash
+scripts/run_full_battle_demo.sh
+```
+
+It starts the local two-node AXL mesh, MCP router, three specialist services,
+the coordinator app, REE-backed risk execution, Gensyn Testnet receipt writes,
+tiny capped native test-ETH payouts, a one-shot chain indexer, and the web
+viewer. Terminal output is formatted into clear demo sections while
+`.runtime/full-battle/summary.txt` remains plain text for evidence sharing.
+
+Default viewer URL:
+
+```text
+http://127.0.0.1:8004
+```
+
+Stop the demo processes with:
+
+```bash
+scripts/stop_full_battle_demo.sh
+```
+
+Current verified full-battle evidence:
+
+- Job ID: `f9f1f7ca-26c4-4314-aafd-4659adbcf028`.
+- Runtime: `767s`.
+- Roles completed: `regime`, `narrative`, `risk`.
+- REE receipt status: `validated`.
+- Chain receipts: task, three contributions, and three reputation/test payout
+  receipts.
+- Native test payout size: `1000000000 wei` per role.
+- Indexed events: 7 total chain events in the local projection.
+
+## Proof Console UI
+
+The browser UI has been upgraded from a simple demo page into a proof console:
+
+- Capability strip shows live mode, AXL transport, REE presence, chain receipt
+  status, and indexed contribution count.
+- Hero area includes the thesis form and a live mesh visualization.
+- Demo fixtures remain replayable for stable walkthroughs.
+- Latest run is split into `Run Timeline`, `Risk Memo`, and `Proof Ledger`.
+- Proof ledger exposes agent registry, task trace, full hashes, REE status,
+  explorer links, reputation evidence, indexed events, run metadata, and
+  topology.
+- Long peer IDs, hashes, and tx links wrap safely for laptop and mobile widths.
+
+## Proof Layer
+
+Signal Count's proof path is intentionally explicit:
+
+```text
+AXL dispatch evidence
+  -> specialist output hash
+  -> verifier attestation and score
+  -> optional REE receipt hash/status
+  -> optional Gensyn Testnet receipt/reputation tx
+  -> indexed chain-event projection
+```
+
+What is verified locally:
+
+- The live AXL path reaches specialist `/mcp` services through the local AXL
+  bridge and MCP router.
+- The same-machine two-node mesh demonstrates distinct AXL peer identities.
+- REE receipt parsing and hash validation are covered by tests, and the real
+  REE E2E script has been run against Gensyn REE.
+- Gensyn Testnet task/contribution/reputation transaction helpers and receipt
+  metadata are covered by tests; previously broadcast deployment and live job
+  receipts are documented in `docs/review-log.md` and
+  `docs/gensyn-contracts.md`.
+- The event indexer can rebuild task, contribution, verification,
+  finalization, and reputation projections from indexed chain logs.
+
+What is not claimed:
+
+- No remote multi-machine AXL deployment unless the mesh scripts are run on
+  separate hosts.
+- No ERC20, USDC, stablecoin, or real-money reward flow.
+- Native test-ETH payout evidence is opt-in, capped, tiny, and only for testnet.
+- No full archival chain reorg rollback beyond the configured repair window.
+
 ## Test
 
 ```bash
@@ -229,7 +329,7 @@ ruff format --check app/ tests/
 Current local verification:
 
 ```text
-60 passed
+119 passed
 ruff check app tests: pass
 ruff format --check app tests: pass
 ```
