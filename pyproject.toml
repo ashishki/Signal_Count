@@ -11,7 +11,7 @@ requires-python = ">=3.11"
 dependencies = []
 
 [tool.setuptools.packages.find]
-include = ["app*"]
+include = ["app*", "mcp_routing*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
