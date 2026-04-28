@@ -1,3 +1,5 @@
+"""Risk specialist service driven by structured LLM output."""
+
 from __future__ import annotations
 
 import json
@@ -7,6 +9,7 @@ from typing import Any
 from app.axl.registry import AXLRegistry
 from app.config.settings import Settings
 from app.integrations.llm_client import LLMClient
+from app.ree.runner import ReeRunner, ReeRunRequest
 from app.schemas.contracts import ScenarioView, SpecialistResponse
 
 
@@ -16,11 +19,13 @@ class RiskService:
         llm_client: LLMClient,
         settings: Settings | None = None,
         model: str = "gpt-4o-mini",
+        ree_runner: ReeRunner | None = None,
     ) -> None:
         self._llm_client = llm_client
         self._settings = settings or Settings()
         self._registry = AXLRegistry(self._settings)
         self._model = model
+        self._ree_runner = ree_runner
 
     async def analyze(
         self,
@@ -29,8 +34,28 @@ class RiskService:
         thesis: str,
     ) -> SpecialistResponse:
         prompt = self._build_messages(thesis)
-        llm_text = await self._llm_client.complete(model=self._model, messages=prompt)
-        parsed = self._parse_response(llm_text)
+
+        ree_receipt_hash: str | None = None
+        receipt_status: str | None = None
+        if self._ree_runner is not None:
+            outcome = self._ree_runner.run(
+                ReeRunRequest(
+                    model_name=self._settings.ree_model or "Qwen/Qwen3-0.6B",
+                    prompt=self._render_ree_prompt(prompt),
+                    max_new_tokens=300,
+                ),
+            )
+            response_text = outcome.receipt.text_output
+            ree_receipt_hash = outcome.receipt.receipt_hash
+            receipt_status = outcome.receipt_status
+        else:
+            response_text = await self._llm_client.complete(
+                model=self._model, messages=prompt
+            )
+
+        parsed = self._parse_response(
+            response_text, allow_text_fallback=bool(ree_receipt_hash)
+        )
         scenario_view = self._build_scenario_view(parsed)
 
         registry_peer = self._registry.get_service_for_role("risk")
@@ -52,7 +77,13 @@ class RiskService:
             confidence=self._coerce_confidence(parsed.get("confidence")),
             citations=[],
             timestamp=datetime.now(UTC).isoformat().replace("+00:00", "Z"),
+            agent_wallet=self._settings.node_wallet_address or None,
+            ree_receipt_hash=ree_receipt_hash,
+            receipt_status=receipt_status,
         )
+
+    def _render_ree_prompt(self, messages: list[dict[str, str]]) -> str:
+        return "\n\n".join(f"[{msg['role']}]\n{msg['content']}" for msg in messages)
 
     def _build_messages(self, thesis: str) -> list[dict[str, str]]:
         return [
@@ -66,6 +97,8 @@ class RiskService:
             {
                 "role": "user",
                 "content": (
+                    # Thesis text is model input for the risk-analysis task only;
+                    # it is not copied into logs, span attributes, or metrics.
                     "Generate the strongest opposing case for this thesis. "
                     "Return JSON with keys: summary, counter_thesis, risks, "
                     "invalidation_triggers, scenario_view, confidence. "
@@ -75,7 +108,9 @@ class RiskService:
             },
         ]
 
-    def _parse_response(self, llm_text: str) -> dict[str, Any]:
+    def _parse_response(
+        self, llm_text: str, *, allow_text_fallback: bool = False
+    ) -> dict[str, Any]:
         json_text = llm_text.strip()
         if json_text.startswith("```"):
             json_text = json_text.split("\n", 1)[1].rsplit("```", 1)[0].strip()
@@ -83,6 +118,8 @@ class RiskService:
         try:
             payload = json.loads(json_text)
         except json.JSONDecodeError as exc:
+            if allow_text_fallback:
+                return self._fallback_from_text(llm_text)
             raise ValueError("LLM response is not valid JSON") from exc
 
         return {
@@ -100,6 +137,26 @@ class RiskService:
             ),
             "scenario_view": payload.get("scenario_view", {}),
             "confidence": payload.get("confidence"),
+        }
+
+    def _fallback_from_text(self, text: str) -> dict[str, Any]:
+        summary = self._coerce_text(
+            text,
+            fallback="REE-backed risk output was produced but not structured as JSON.",
+        )
+        return {
+            "summary": summary[:800],
+            "counter_thesis": (
+                "The thesis can fail if the expected catalyst does not arrive."
+            ),
+            "risks": [
+                "REE output was unstructured, so risk extraction used a conservative fallback."
+            ],
+            "invalidation_triggers": [
+                "Structured REE JSON is required before treating the risk view as high confidence."
+            ],
+            "scenario_view": {"bull": 0.25, "base": 0.35, "bear": 0.40},
+            "confidence": 0.35,
         }
 
     def _build_scenario_view(self, parsed: dict[str, Any]) -> ScenarioView:
