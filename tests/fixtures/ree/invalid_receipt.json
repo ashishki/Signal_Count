@@ -1,0 +1,18 @@
+{
+  "model_name": "Qwen/Qwen3-0.6B",
+  "commit_hash": "0xe4d4dee440bd297b6ea768d6622ac1c74cd139eb0dd4e7aad9d5840dc33937a7",
+  "config_hash": "0xc16021cbc4568db9a47f66b15ca96aa88203bc2cf59679761a9deaf575fb54fa",
+  "prompt": "Will BTC outperform ETH over the next 90 days given current global liquidity conditions?",
+  "prompt_hash": "0xe1b44a573bdeeab1d9f83cf0ba2591f2cd14b8776e6c72cc67bb2632f22c8e04",
+  "parameters": {"max_new_tokens": 300},
+  "parameters_hash": "0xd4022f81f39d83b3cdff0972eeab4e06dc9d15a998b813207f5e48511d9a8a1d",
+  "tokens_hash": "0x2781a5a4c10dbf4effdfb12f00ccb87d32953541f87c8fd61fba5b51ff485fa4",
+  "token_count": 42,
+  "finish_reason": "eos_token",
+  "text_output": "Inconclusive. Liquidity drains tend to tighten collateral first; both BTC and ETH compress under that regime, with ETH typically exhibiting higher beta to risk-off impulses.",
+  "device_type": "cpu",
+  "device_name": "AMD EPYC 9654",
+  "receipt_hash": "0xdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+  "version": "1.0",
+  "ree_version": "0.2.0"
+}
