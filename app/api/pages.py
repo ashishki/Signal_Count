@@ -1,3 +1,5 @@
+"""Operator-facing demo pages."""
+
 from __future__ import annotations
 
 from html import escape
@@ -11,6 +13,7 @@ from pydantic import ValidationError
 
 from app.api.jobs import create_completed_job_submission
 from app.demo.fixtures import DemoFixture, get_demo_fixture, list_demo_fixtures
+from app.indexer.projections import ChainEventsProjection
 from app.rendering.memo import render_memo_html
 from app.schemas.contracts import FinalMemo, ThesisRequest
 from app.store import JobRecord, JobStore
@@ -48,10 +51,12 @@ def _get_memo_synthesizer(request: Request):
 async def home_page(request: Request) -> HTMLResponse:
     store = _get_job_store(request)
     latest_job = await store.get_latest_job()
+    indexed_projection = await store.get_indexed_chain_projection()
     template = Template(_TEMPLATE_PATH.read_text())
     html = template.safe_substitute(
         fixture_cards=_render_fixture_cards(),
-        latest_job_panel=_render_latest_job_panel(latest_job),
+        capability_strip=_render_capability_strip(latest_job, indexed_projection),
+        latest_job_panel=_render_latest_job_panel(latest_job, indexed_projection),
     )
     return HTMLResponse(content=html)
 
@@ -94,12 +99,20 @@ async def replay_demo_fixture(
 
 def _render_fixture_cards() -> str:
     cards: list[str] = []
-    for fixture in list_demo_fixtures():
+    role_classes = ("regime", "narrative", "risk")
+    for index, fixture in enumerate(list_demo_fixtures()):
+        role_class = role_classes[index % len(role_classes)]
         cards.append(
             "\n".join(
                 [
-                    '<article class="fixture-card">',
-                    f"<h3>{escape(fixture.title)}</h3>",
+                    f'<article class="fixture-card agent-card {role_class} done">',
+                    '<div class="card-header">',
+                    "<div>",
+                    f'<div class="agent-name">{escape(fixture.title)}</div>',
+                    '<div class="agent-role">Replayable market thesis fixture</div>',
+                    "</div>",
+                    '<div class="status-ring" aria-hidden="true">ok</div>',
+                    "</div>",
                     f"<p>{escape(fixture.thesis)}</p>",
                     '<dl class="fixture-meta">',
                     f"<div><dt>Asset</dt><dd>{escape(fixture.asset)}</dd></div>",
@@ -118,7 +131,55 @@ def _render_fixture_cards() -> str:
     return "\n".join(cards)
 
 
-def _render_latest_job_panel(latest_job: JobRecord | None) -> str:
+def _render_capability_strip(
+    latest_job: JobRecord | None,
+    indexed_projection: ChainEventsProjection,
+) -> str:
+    run_metadata = latest_job.run_metadata if latest_job is not None else {}
+    mode = str(run_metadata.get("run_mode") or "no-run")
+    transport = str(run_metadata.get("transport") or "")
+    return "\n".join(
+        [
+            '<section class="capability-strip" aria-label="Proof capabilities">',
+            _render_capability("Mode", mode, _status_for_mode(mode)),
+            _render_capability(
+                "AXL",
+                transport or "not recorded",
+                "confirmed" if transport == "axl-mcp" else "missing",
+            ),
+            _render_capability(
+                "REE",
+                "receipt present" if _has_ree_evidence(run_metadata) else "not present",
+                "confirmed" if _has_ree_evidence(run_metadata) else "missing",
+            ),
+            _render_capability(
+                "Chain",
+                str(run_metadata.get("receipt_status") or "not configured"),
+                _status_for_receipts(run_metadata),
+            ),
+            _render_capability(
+                "Indexer",
+                f"{len(indexed_projection.contributions)} contributions indexed",
+                "confirmed" if indexed_projection.contributions else "missing",
+            ),
+            "</section>",
+        ]
+    )
+
+
+def _render_capability(label: str, value: str, status: str) -> str:
+    return (
+        f'<div class="capability cap-chip capability-{escape(status)}">'
+        f"<span>{escape(label)}</span>"
+        f"<strong>{escape(value)}</strong>"
+        "</div>"
+    )
+
+
+def _render_latest_job_panel(
+    latest_job: JobRecord | None,
+    indexed_projection: ChainEventsProjection,
+) -> str:
     if latest_job is None or latest_job.memo is None:
         return (
             '<section class="job-panel empty">'
@@ -135,20 +196,61 @@ def _render_latest_job_panel(latest_job: JobRecord | None) -> str:
     return "\n".join(
         [
             '<section class="job-panel">',
-            "<h2>Latest Job</h2>",
-            f'<p class="job-id">Job ID: <code>{escape(latest_job.job_id)}</code></p>',
+            '<div class="job-panel-topbar">',
+            '<div class="job-id-group">',
+            '<span class="job-id-label">Latest Job</span>',
+            f'<span class="job-id-val">Job ID: <code>{escape(latest_job.job_id)}</code></span>',
+            "</div>",
+            '<div class="job-id-group">',
+            (
+                '<span class="job-meta">'
+                f"{asset} / {horizon_days} days</span>"
+            ),
+            (
+                f'<span class="status-pill status status-{escape(_status_class(latest_job.status))}">'
+                f"{escape(latest_job.status)}</span>"
+            ),
+            "</div>",
+            "</div>",
+            '<div class="tab-bar">',
+            '<button class="tab-btn active" type="button" onclick="switchTab(\'timeline\', this)">Run Timeline</button>',
+            '<button class="tab-btn" type="button" onclick="switchTab(\'memo\', this)">Risk Memo</button>',
+            '<button class="tab-btn" type="button" onclick="switchTab(\'ledger\', this)">Proof Ledger</button>',
+            "</div>",
+            '<div class="tab-pane active" id="tab-timeline">',
             '<div class="job-request">',
             "<h3>Submitted Thesis</h3>",
             f"<p>{thesis}</p>",
             (
                 '<p class="job-meta">'
                 f"Asset: <strong>{asset}</strong> "
-                f"· Horizon: <strong>{horizon_days} days</strong></p>"
+                f"&middot; Horizon: <strong>{horizon_days} days</strong></p>"
             ),
             "</div>",
+            _render_run_timeline(latest_job.provenance_ledger, latest_job.run_metadata),
+            "</div>",
+            '<div class="tab-pane" id="tab-memo">',
             '<div class="job-memo">',
             memo_html,
             "</div>",
+            "</div>",
+            '<div class="tab-pane" id="tab-ledger">',
+            '<section class="proof-console-layout">',
+            '<div class="proof-column primary-proof">',
+            _render_trace_ledger(
+                latest_job.provenance_ledger,
+                latest_job.run_metadata,
+            ),
+            _render_proof_details(latest_job.run_metadata),
+            "</div>",
+            '<div class="proof-column support-proof">',
+            _render_agent_registry(
+                latest_job.provenance_ledger, latest_job.run_metadata
+            ),
+            _render_reputation_panel(latest_job.run_metadata, indexed_projection),
+            _render_indexed_events_panel(indexed_projection),
+            "</div>",
+            "</section>",
             _render_run_metadata(latest_job.run_metadata),
             '<section class="node-participation">',
             "<h3>Run Evidence</h3>",
@@ -162,9 +264,394 @@ def _render_latest_job_panel(latest_job: JobRecord | None) -> str:
             "</table>",
             "</section>",
             _render_topology(latest_job.topology_snapshot),
+            "</div>",
             "</section>",
         ]
     )
+
+
+def _render_run_timeline(
+    provenance_ledger: list[dict[str, object]],
+    run_metadata: dict[str, object],
+) -> str:
+    items = [
+        ("Task Created", str(run_metadata.get("receipt_status") or "recorded")),
+        ("Specialists", _roles_status(provenance_ledger)),
+        ("Verifier", _verification_status(run_metadata)),
+        (
+            "REE Receipt",
+            "present" if _has_ree_evidence(run_metadata) else "not present",
+        ),
+        ("Chain Receipt", str(run_metadata.get("receipt_status") or "not configured")),
+        ("Final Memo", "rendered"),
+    ]
+    rendered = "".join(
+        (
+            f'<li class="timeline-step status-border-{escape(_status_class(status))}">'
+            f"<span>{escape(label)}</span>"
+            f'<strong class="status status-{escape(_status_class(status))}">'
+            f"{escape(status)}</strong>"
+            "</li>"
+        )
+        for label, status in items
+    )
+    return (
+        '<section class="run-timeline">'
+        "<h3>Run Timeline</h3>"
+        f"<ol>{rendered}</ol>"
+        "</section>"
+    )
+
+
+def _render_trace_ledger(
+    provenance_ledger: list[dict[str, object]],
+    run_metadata: dict[str, object],
+) -> str:
+    rows = _render_trace_rows(provenance_ledger, run_metadata)
+    if not rows:
+        rows = '<tr><td colspan="7">No trace evidence recorded for this job.</td></tr>'
+    return "\n".join(
+        [
+            '<section class="trace-ledger">',
+            "<h3>Task Trace</h3>",
+            '<table class="ledger-table trace-table">',
+            (
+                "<thead><tr><th>Role</th><th>AXL Peer</th><th>Wallet</th>"
+                "<th>Output Hash</th><th>REE Receipt</th><th>Status</th>"
+                "<th>Tx</th></tr></thead>"
+            ),
+            f"<tbody>{rows}</tbody>",
+            "</table>",
+            "</section>",
+        ]
+    )
+
+
+def _render_trace_rows(
+    provenance_ledger: list[dict[str, object]],
+    run_metadata: dict[str, object],
+) -> str:
+    attestations = _by_role(run_metadata.get("verification_attestations"))
+    contribution_receipts = _chain_receipts_by_role(
+        run_metadata.get("chain_receipts"),
+        kind="contribution",
+    )
+    reputation_receipts = _chain_receipts_by_role(
+        run_metadata.get("chain_receipts"),
+        kind="reputation",
+    )
+
+    rows: list[str] = []
+    for record in provenance_ledger:
+        role = str(record.get("node_role", ""))
+        attestation = attestations.get(role, {})
+        contribution_receipt = contribution_receipts.get(role, {})
+        reputation_receipt = reputation_receipts.get(role, {})
+        receipt = contribution_receipt or reputation_receipt
+        status = (
+            receipt.get("status")
+            or attestation.get("status")
+            or record.get("status")
+            or ""
+        )
+        rows.append(
+            "<tr>"
+            f"<td>{escape(role)}</td>"
+            f'<td><code class="id-chip">{escape(str(record.get("peer_id", "")))}</code></td>'
+            f'<td><code class="id-chip">{escape(str(attestation.get("agent_wallet", "")))}</code></td>'
+            f'<td><code class="hash-chip" title="{escape(str(attestation.get("output_hash", "")))}">{escape(_short(str(attestation.get("output_hash", ""))))}</code></td>'
+            f"<td>{_render_ree_cell(attestation, contribution_receipt)}</td>"
+            f'<td><span class="status status-{escape(_status_class(str(status)))}">{escape(str(status))}</span></td>'
+            f"<td>{_render_tx_cell(receipt)}</td>"
+            "</tr>"
+        )
+    return "".join(rows)
+
+
+def _by_role(value: object) -> dict[str, dict[str, object]]:
+    if not isinstance(value, list):
+        return {}
+    return {
+        str(item.get("node_role")): item
+        for item in value
+        if isinstance(item, dict) and item.get("node_role")
+    }
+
+
+def _chain_receipts_by_role(
+    value: object,
+    *,
+    kind: str,
+) -> dict[str, dict[str, object]]:
+    if not isinstance(value, list):
+        return {}
+    return {
+        str(item.get("role")): item
+        for item in value
+        if isinstance(item, dict) and item.get("kind") == kind and item.get("role")
+    }
+
+
+def _render_ree_cell(
+    attestation: dict[str, object],
+    receipt: dict[str, object],
+) -> str:
+    ree_hash = receipt.get("ree_receipt_hash") or attestation.get("ree_receipt_hash")
+    ree_status = receipt.get("ree_status") or attestation.get("receipt_status")
+    if not ree_hash and not ree_status:
+        return ""
+    return (
+        f"<span>{escape(str(ree_status or 'present'))}</span> "
+        f"<code>{escape(_short(str(ree_hash or '')))}</code>"
+    )
+
+
+def _render_tx_cell(receipt: dict[str, object]) -> str:
+    tx_hash = receipt.get("tx_hash")
+    explorer_url = receipt.get("explorer_url")
+    if not tx_hash:
+        return ""
+    if explorer_url:
+        return (
+            f'<a href="{escape(str(explorer_url))}">'
+            f'<code class="hash-chip" title="{escape(str(tx_hash))}">'
+            f"{escape(_short(str(tx_hash)))}</code></a>"
+        )
+    return (
+        f'<code class="hash-chip" title="{escape(str(tx_hash))}">'
+        f"{escape(_short(str(tx_hash)))}</code>"
+    )
+
+
+def _render_agent_registry(
+    provenance_ledger: list[dict[str, object]],
+    run_metadata: dict[str, object],
+) -> str:
+    if not provenance_ledger:
+        rows = '<tr><td colspan="6">No agent registry evidence recorded.</td></tr>'
+    else:
+        attestations = _by_role(run_metadata.get("verification_attestations"))
+        reputation_by_role = _reputation_by_role(run_metadata.get("reputation_updates"))
+        rows = "".join(
+            (
+                "<tr>"
+                f"<td>{escape(str(record.get('node_role', '')))}</td>"
+                f"<td>{escape(str(record.get('service_name', '')))}</td>"
+                f'<td><code class="id-chip">{escape(str(record.get("peer_id", "")))}</code></td>'
+                f'<td><code class="id-chip">{escape(str(attestations.get(str(record.get("node_role", "")), {}).get("agent_wallet", "")))}</code></td>'
+                f'<td><span class="status status-{escape(_status_class(str(record.get("status", ""))))}">{escape(str(record.get("status", "")))}</span></td>'
+                f"<td>{escape(reputation_by_role.get(str(record.get('node_role', '')), ''))}</td>"
+                "</tr>"
+            )
+            for record in provenance_ledger
+        )
+    return (
+        '<section class="agent-registry">'
+        "<h3>Agent Registry</h3>"
+        '<table class="ledger-table compact-table">'
+        "<thead><tr><th>Role</th><th>Service</th><th>AXL Peer</th>"
+        "<th>Wallet</th><th>Status</th><th>Reputation</th></tr></thead>"
+        f"<tbody>{rows}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
+def _render_proof_details(run_metadata: dict[str, object]) -> str:
+    attestations = run_metadata.get("verification_attestations")
+    receipts = run_metadata.get("chain_receipts")
+    lines: list[str] = []
+    if isinstance(attestations, list):
+        for item in attestations:
+            if not isinstance(item, dict):
+                continue
+            role = str(item.get("node_role", ""))
+            details = [
+                ("output_hash", item.get("output_hash")),
+                ("attestation_hash", item.get("attestation_hash")),
+                ("verifier_signature", item.get("verifier_signature")),
+                ("ree_receipt_hash", item.get("ree_receipt_hash")),
+                ("receipt_status", item.get("receipt_status")),
+            ]
+            lines.extend(
+                _render_proof_detail_line(role, key, value)
+                for key, value in details
+                if value
+            )
+    if isinstance(receipts, list):
+        for receipt in receipts:
+            if not isinstance(receipt, dict):
+                continue
+            role = str(receipt.get("role") or receipt.get("kind") or "")
+            details = [
+                ("tx_hash", receipt.get("tx_hash")),
+                ("explorer_url", receipt.get("explorer_url")),
+                ("ree_receipt_hash", receipt.get("ree_receipt_hash")),
+                ("native_test_payout_wei", receipt.get("native_test_payout_wei")),
+            ]
+            lines.extend(
+                _render_proof_detail_line(role, key, value)
+                for key, value in details
+                if value
+            )
+    if not lines:
+        lines.append("<li>No full proof metadata recorded for this run.</li>")
+    return (
+        '<section class="proof-details" id="proof-details">'
+        "<h3>Proof Details</h3>"
+        "<ul>" + "".join(lines) + "</ul>"
+        "</section>"
+    )
+
+
+def _render_proof_detail_line(role: str, key: str, value: object) -> str:
+    return (
+        "<li>"
+        f"<span>{escape(role or 'run')} / {escape(key)}</span>"
+        f'<code class="hash-chip">{escape(str(value))}</code>'
+        "</li>"
+    )
+
+
+def _render_reputation_panel(
+    run_metadata: dict[str, object],
+    indexed_projection: ChainEventsProjection,
+) -> str:
+    updates = run_metadata.get("reputation_updates")
+    rows: list[str] = []
+    if isinstance(updates, list):
+        for update in updates:
+            if not isinstance(update, dict):
+                continue
+            rows.append(
+                "<tr>"
+                f"<td>{escape(str(update.get('node_role', '')))}</td>"
+                f'<td><code class="id-chip">{escape(str(update.get("peer_id", "")))}</code></td>'
+                f"<td>{escape(str(update.get('verifier_status', '')))}</td>"
+                f"<td>{escape(str(update.get('reputation_points', '')))}</td>"
+                "</tr>"
+            )
+    for entry in indexed_projection.agent_leaderboard:
+        rows.append(
+            "<tr>"
+            f"<td>{escape(entry.node_role)}</td>"
+            f'<td><code class="id-chip">{escape(entry.agent_wallet)}</code></td>'
+            "<td>indexed_chain</td>"
+            f"<td>{entry.reputation_points:.2f}</td>"
+            "</tr>"
+        )
+    if not rows:
+        rows.append('<tr><td colspan="4">No reputation evidence recorded.</td></tr>')
+    return (
+        '<section class="reputation-panel">'
+        "<h3>Reputation Ledger</h3>"
+        '<table class="ledger-table compact-table">'
+        "<thead><tr><th>Role</th><th>Peer / Wallet</th><th>Status</th>"
+        "<th>Points</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
+def _render_indexed_events_panel(indexed_projection: ChainEventsProjection) -> str:
+    return (
+        '<section class="indexed-events-panel">'
+        "<h3>Indexed Events</h3>"
+        '<dl class="metric-grid">'
+        f"<div><dt>Tasks</dt><dd>{len(indexed_projection.tasks)}</dd></div>"
+        f"<div><dt>Contributions</dt><dd>{len(indexed_projection.contributions)}</dd></div>"
+        f"<div><dt>Verifications</dt><dd>{len(indexed_projection.verifications)}</dd></div>"
+        f"<div><dt>Reputation</dt><dd>{len(indexed_projection.reputations)}</dd></div>"
+        "</dl>"
+        "</section>"
+    )
+
+
+def _has_ree_evidence(run_metadata: dict[str, object]) -> bool:
+    attestations = run_metadata.get("verification_attestations")
+    if isinstance(attestations, list):
+        for item in attestations:
+            if isinstance(item, dict) and (
+                item.get("ree_receipt_hash") or item.get("receipt_status")
+            ):
+                return True
+    receipts = run_metadata.get("chain_receipts")
+    if isinstance(receipts, list):
+        return any(
+            isinstance(item, dict)
+            and (item.get("ree_receipt_hash") or item.get("ree_status"))
+            for item in receipts
+        )
+    return False
+
+
+def _status_for_mode(mode: str) -> str:
+    if mode in {"live-axl", "mesh-axl", "axl-mcp"}:
+        return "confirmed"
+    if mode == "offline-demo-preview":
+        return "warning"
+    if mode == "no-run":
+        return "missing"
+    return "warning"
+
+
+def _status_for_receipts(run_metadata: dict[str, object]) -> str:
+    status = str(run_metadata.get("receipt_status") or "")
+    if status:
+        return _status_class(status)
+    return "missing"
+
+
+def _status_class(status: str) -> str:
+    normalized = status.strip().lower().replace(" ", "-").replace("_", "-")
+    if not normalized:
+        return "missing"
+    if normalized in {"not-configured", "not-present"}:
+        return normalized
+    return normalized
+
+
+def _roles_status(provenance_ledger: list[dict[str, object]]) -> str:
+    if not provenance_ledger:
+        return "missing"
+    statuses = {str(record.get("status", "")) for record in provenance_ledger}
+    if statuses <= {"completed"}:
+        return "completed"
+    if any(
+        status in {"failed", "error", "timed_out", "missing"} for status in statuses
+    ):
+        return "partial"
+    return "recorded"
+
+
+def _verification_status(run_metadata: dict[str, object]) -> str:
+    attestations = run_metadata.get("verification_attestations")
+    if not isinstance(attestations, list) or not attestations:
+        return "not present"
+    statuses = [
+        str(item.get("status"))
+        for item in attestations
+        if isinstance(item, dict) and item.get("status")
+    ]
+    if statuses and all(status == "accepted" for status in statuses):
+        return "accepted"
+    if any(status == "rejected" for status in statuses):
+        return "rejected"
+    return statuses[0] if statuses else "recorded"
+
+
+def _reputation_by_role(value: object) -> dict[str, str]:
+    if not isinstance(value, list):
+        return {}
+    result: dict[str, str] = {}
+    for update in value:
+        if not isinstance(update, dict) or not update.get("node_role"):
+            continue
+        result[str(update["node_role"])] = (
+            f"{float(update.get('reputation_points', 0.0)):.2f}"
+        )
+    return result
 
 
 def _render_run_metadata(run_metadata: dict[str, object]) -> str:
@@ -182,6 +669,7 @@ def _render_run_metadata(run_metadata: dict[str, object]) -> str:
         "axl_local_base_url",
         "axl_topology_path",
         "axl_mcp_router_url",
+        "receipt_status",
     )
     rows = "".join(
         (
@@ -199,6 +687,9 @@ def _render_run_metadata(run_metadata: dict[str, object]) -> str:
             "<tr><th>dispatch_targets</th>"
             f"<td><code>{escape(', '.join(str(item) for item in dispatch_targets))}</code></td></tr>"
         )
+    rows += _render_graph_state(run_metadata.get("graph_state"))
+    rows += _render_reputation_updates(run_metadata.get("reputation_updates"))
+    rows += _render_chain_receipts(run_metadata.get("chain_receipts", []))
     return (
         '<section class="run-metadata">'
         "<h3>Run Metadata</h3>"
@@ -207,6 +698,112 @@ def _render_run_metadata(run_metadata: dict[str, object]) -> str:
         "</table>"
         "</section>"
     )
+
+
+def _render_graph_state(graph_state: object) -> str:
+    if not isinstance(graph_state, dict):
+        return ""
+    nodes = graph_state.get("nodes", [])
+    if not isinstance(nodes, list) or not nodes:
+        return ""
+
+    parts: list[str] = []
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        label = " / ".join(
+            str(value)
+            for value in (
+                node.get("id"),
+                node.get("type"),
+                node.get("status"),
+            )
+            if value
+        )
+        if node.get("optional"):
+            label = f"{label} / optional"
+        if label:
+            parts.append(label)
+    if not parts:
+        return ""
+    return (
+        f"<tr><th>graph_state</th><td><code>{escape(', '.join(parts))}</code></td></tr>"
+    )
+
+
+def _render_reputation_updates(reputation_updates: object) -> str:
+    if not isinstance(reputation_updates, list) or not reputation_updates:
+        return ""
+
+    parts: list[str] = []
+    for update in reputation_updates:
+        if not isinstance(update, dict):
+            continue
+        label = " / ".join(
+            str(value)
+            for value in (
+                update.get("node_role"),
+                update.get("peer_id"),
+                update.get("verifier_status"),
+                f"{float(update.get('reputation_points', 0.0)):.2f} reputation",
+            )
+            if value
+        )
+        if label:
+            parts.append(label)
+    if not parts:
+        return ""
+    return (
+        "<tr><th>reputation_updates</th>"
+        f"<td><code>{escape(', '.join(parts))}</code></td></tr>"
+    )
+
+
+def _render_chain_receipts(chain_receipts: object) -> str:
+    if not isinstance(chain_receipts, list) or not chain_receipts:
+        return ""
+
+    lines: list[str] = []
+    for receipt in chain_receipts:
+        if not isinstance(receipt, dict):
+            continue
+        label = " / ".join(
+            str(value)
+            for value in (
+                receipt.get("kind"),
+                receipt.get("role"),
+                receipt.get("status"),
+            )
+            if value
+        )
+        tx_hash = receipt.get("tx_hash")
+        explorer_url = receipt.get("explorer_url")
+        error = receipt.get("error")
+        ree_receipt_hash = receipt.get("ree_receipt_hash")
+        ree_status = receipt.get("ree_status")
+        native_test_payout_wei = receipt.get("native_test_payout_wei")
+        if explorer_url and tx_hash:
+            ree_suffix = ""
+            if ree_receipt_hash:
+                ree_label = escape(str(ree_status or "ree"))
+                ree_hash = escape(str(ree_receipt_hash)[:18] + "...")
+                ree_suffix = f' &middot; REE <span class="ree-status">{ree_label}</span> <code title="{escape(str(ree_receipt_hash))}">{ree_hash}</code>'
+            payout_suffix = ""
+            if native_test_payout_wei:
+                payout_suffix = (
+                    " &middot; native test payout "
+                    f"<code>{escape(str(native_test_payout_wei))} wei</code>"
+                )
+            lines.append(
+                f'{escape(label)}: <a href="{escape(str(explorer_url))}">'
+                f"<code>{escape(str(tx_hash))}</code></a>{ree_suffix}{payout_suffix}"
+            )
+        elif error:
+            lines.append(f"{escape(label)}: {escape(str(error))}")
+
+    if not lines:
+        return ""
+    return f"<tr><th>chain_receipts</th><td>{'<br>'.join(lines)}</td></tr>"
 
 
 def _render_node_rows(provenance_ledger: list[dict[str, object]]) -> str:
@@ -245,6 +842,7 @@ def _render_topology(topology_snapshot: dict[str, object] | None) -> str:
     peer_items = "".join(
         f"<li>{escape(str(peer))}</li>" for peer in peers if isinstance(peer, str)
     )
+
     local_peer = escape(
         str(
             topology_snapshot.get("local_peer_id")
@@ -269,6 +867,14 @@ def _render_topology(topology_snapshot: dict[str, object] | None) -> str:
         f"<ul>{tree_items}</ul>"
         "</section>"
     )
+
+
+def _short(value: str, length: int = 18) -> str:
+    if not value:
+        return ""
+    if len(value) <= length:
+        return value
+    return f"{value[:length]}..."
 
 
 async def _parse_urlencoded_body(request: Request) -> dict[str, str]:

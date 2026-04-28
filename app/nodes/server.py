@@ -1,3 +1,5 @@
+"""AXL-facing specialist node server."""
+
 from __future__ import annotations
 
 import asyncio
@@ -16,6 +18,7 @@ from app.integrations.llm_client import LLMClient
 from app.nodes.narrative.service import NarrativeService
 from app.nodes.regime.service import RegimeService, RegimeSnapshot
 from app.nodes.risk.service import RiskService
+from app.ree.runner import ReeRunner
 from app.schemas.contracts import SpecialistResponse
 
 
@@ -124,7 +127,17 @@ async def analyze_payload(
         )
 
     if role == "risk":
-        return await RiskService(llm_client=llm_client, settings=settings).analyze(
+        ree_runner = (
+            ReeRunner(
+                command=settings.gensyn_sdk_command,
+                cpu_only=settings.ree_cpu_only,
+            )
+            if settings.signal_count_ree_enabled
+            else None
+        )
+        return await RiskService(
+            llm_client=llm_client, settings=settings, ree_runner=ree_runner
+        ).analyze(
             job_id=job_id,
             peer_id=peer_id,
             thesis=str(payload.get("thesis", "")),
