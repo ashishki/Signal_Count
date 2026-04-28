@@ -20,7 +20,6 @@ NATIVE_TEST_PAYOUT_WEI="${NATIVE_TEST_PAYOUT_WEI:-1000000000}"
 NATIVE_TEST_PAYOUT_MAX_WEI="${NATIVE_TEST_PAYOUT_MAX_WEI:-1000000000000}"
 
 mkdir -p "${RUNTIME_DIR}" "${LOG_DIR}" "${MESH_DIR}"
-: >"${SUMMARY_FILE}"
 
 if [[ -f "${PIDS_FILE}" ]]; then
   while read -r pid; do
@@ -32,6 +31,10 @@ if [[ -f "${PIDS_FILE}" ]]; then
   done <"${PIDS_FILE}"
 fi
 
+if [[ -s "${SUMMARY_FILE}" ]]; then
+  cp "${SUMMARY_FILE}" "${SUMMARY_FILE}.$(date +%Y%m%d_%H%M%S).bak"
+fi
+: >"${SUMMARY_FILE}"
 : >"${PIDS_FILE}"
 
 START_TS="$(date +%s)"
@@ -338,7 +341,8 @@ wait_http "${APP_URL}/health" "Signal Count app" 90
 
 section "Live Job"
 log "Submitting live job through AXL, REE, chain receipts, and tiny native test payouts"
-"${PYTHON}" - <<'PY'
+SUBMIT_LOG="${LOG_DIR}/job-submit.log"
+"${PYTHON}" - <<'PY' >"${SUBMIT_LOG}" 2>&1 &
 import json
 import os
 import time
@@ -373,6 +377,18 @@ runtime.mkdir(parents=True, exist_ok=True)
 (runtime / "job-submit-seconds.txt").write_text(f"{time.time() - started:.3f}\n", encoding="utf-8")
 print(job_id)
 PY
+SUBMIT_PID="$!"
+while kill -0 "${SUBMIT_PID}" >/dev/null 2>&1; do
+  sleep 30
+  if kill -0 "${SUBMIT_PID}" >/dev/null 2>&1; then
+    log "Live job still running: waiting on AXL dispatch, REE, chain receipts, or payouts"
+  fi
+done
+if ! wait "${SUBMIT_PID}"; then
+  fail "Live job failed. Last submit log lines:"
+  tail -n 80 "${SUBMIT_LOG}" >&2 || true
+  exit 1
+fi
 
 JOB_ID="$(cat "${RUNTIME_DIR}/created-job.json" | "${PYTHON}" -c 'import json,sys; print(json.load(sys.stdin)["job_id"])')"
 ok "Job completed: ${JOB_ID}"
