@@ -202,10 +202,7 @@ def _render_latest_job_panel(
             f'<span class="job-id-val">Job ID: <code>{escape(latest_job.job_id)}</code></span>',
             "</div>",
             '<div class="job-id-group">',
-            (
-                '<span class="job-meta">'
-                f"{asset} / {horizon_days} days</span>"
-            ),
+            (f'<span class="job-meta">{asset} / {horizon_days} days</span>'),
             (
                 f'<span class="status-pill status status-{escape(_status_class(latest_job.status))}">'
                 f"{escape(latest_job.status)}</span>"

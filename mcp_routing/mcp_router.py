@@ -85,7 +85,10 @@ async def handle_route(request: web.Request) -> web.Response:
                     )
                     services[service_name]["healthy"] = False
                     return web.json_response(
-                        {"response": None, "error": f"Service error: {response.status}"},
+                        {
+                            "response": None,
+                            "error": f"Service error: {response.status}",
+                        },
                         status=502,
                     )
 
