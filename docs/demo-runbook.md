@@ -194,14 +194,17 @@ after recording:
 scripts/stop_full_battle_demo.sh
 ```
 
-Current verified full-battle reference run:
+Current verified full-battle reference run from April 28, 2026:
 
-- Job ID: `f9f1f7ca-26c4-4314-aafd-4659adbcf028`.
-- Runtime: `767s`.
+- Job ID: `c033560c-7a30-4668-87f4-a75559d06475`.
+- Runtime: `406s` end to end.
+- Live job completed at `+397s`; the remaining time was one-shot indexing and
+  evidence summary generation.
 - Roles: `regime`, `narrative`, and `risk` completed.
 - REE status: `validated`.
 - Chain receipts: 7 transaction receipts.
-- Indexer: 7 chain events indexed into the local projection.
+- Indexed projection after replay: `tasks=6`, `contributions=15`,
+  `verifications=0`, `reputation=15`.
 
 ## Screenshot Set
 
