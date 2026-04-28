@@ -1,3 +1,5 @@
+"""Core request and response contracts for Signal Count."""
+
 from __future__ import annotations
 
 from pydantic import BaseModel, Field
@@ -32,6 +34,62 @@ class SpecialistResponse(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     citations: list[str] = Field(default_factory=list)
     timestamp: str = Field(min_length=1)
+    agent_wallet: str | None = Field(default=None, pattern=r"^0x[a-fA-F0-9]{40}$")
+    ree_receipt_hash: str | None = None
+    receipt_status: str | None = None
+
+
+class TaskSpec(BaseModel):
+    job_id: str = Field(min_length=1)
+    thesis: str = Field(min_length=1)
+    asset: str = Field(min_length=1)
+    horizon_days: int = Field(gt=0)
+
+
+class AgentIdentity(BaseModel):
+    role: str = Field(min_length=1)
+    peer_id: str = Field(min_length=1)
+    wallet: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
+
+
+class SignatureEnvelope(BaseModel):
+    signer: str = Field(pattern=r"^0x[a-fA-F0-9]{40}$")
+    task_hash: str = Field(pattern=r"^0x[a-fA-F0-9]{64}$")
+    output_hash: str = Field(pattern=r"^0x[a-fA-F0-9]{64}$")
+    signature: str = Field(pattern=r"^0x[a-fA-F0-9]{130}$")
+    algorithm: str = "eip191"
+
+
+class SignedAgentExecution(BaseModel):
+    task: TaskSpec
+    identity: AgentIdentity
+    response: SpecialistResponse
+    signature: SignatureEnvelope
+
+
+class VerificationAttestation(BaseModel):
+    job_id: str = Field(min_length=1)
+    node_role: str = Field(min_length=1)
+    peer_id: str = Field(min_length=1)
+    status: str = Field(pattern=r"^(accepted|rejected)$")
+    score: float = Field(ge=0.0, le=1.0)
+    reasons: list[str] = Field(default_factory=list)
+    signer: str | None = None
+    agent_wallet: str | None = Field(default=None, pattern=r"^0x[a-fA-F0-9]{40}$")
+    output_hash: str | None = None
+    ree_receipt_hash: str | None = None
+    receipt_status: str | None = None
+    verifier: str | None = None
+    attestation_hash: str | None = None
+    verifier_signature: str | None = None
+    signature_algorithm: str | None = None
+
+
+class MemoEvidenceSource(BaseModel):
+    text: str = Field(min_length=1)
+    source_role: str = Field(min_length=1)
+    peer_id: str = Field(min_length=1)
+    output_hash: str | None = None
 
 
 class FinalMemo(BaseModel):
@@ -45,5 +103,9 @@ class FinalMemo(BaseModel):
     invalidation_triggers: list[str] = Field(default_factory=list)
     confidence_rationale: str = ""
     provenance: list[ProvenanceRecord] = Field(default_factory=list)
+    evidence_sources: list[MemoEvidenceSource] = Field(default_factory=list)
+    verification_attestations: list[VerificationAttestation] = Field(
+        default_factory=list
+    )
     partial: bool = False
     partial_reason: str | None = None
