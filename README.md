@@ -308,8 +308,7 @@ What is verified locally:
   REE E2E script has been run against Gensyn REE.
 - Gensyn Testnet task/contribution/reputation transaction helpers and receipt
   metadata are covered by tests; previously broadcast deployment and live job
-  receipts are documented in `docs/review-log.md` and
-  `docs/gensyn-contracts.md`.
+  receipts are documented in `docs/gensyn-contracts.md`.
 - The event indexer can rebuild task, contribution, verification,
   finalization, and reputation projections from indexed chain logs.
 
