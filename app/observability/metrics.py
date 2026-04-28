@@ -1,3 +1,5 @@
+"""Shared noop metrics primitives for lightweight instrumentation."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -63,4 +65,6 @@ _METRICS = NoopMetrics()
 
 
 def get_metrics() -> NoopMetrics:
+    """Return the shared noop metrics implementation."""
+
     return _METRICS

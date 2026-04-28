@@ -1,3 +1,5 @@
+"""Thin async wrapper for a chat-style LLM HTTP provider."""
+
 from __future__ import annotations
 
 import asyncio
@@ -14,7 +16,7 @@ from app.observability.tracing import get_tracer
 
 
 class LLMClientError(RuntimeError):
-    pass
+    """Raised when the configured LLM provider cannot be called successfully."""
 
 
 @dataclass(frozen=True)

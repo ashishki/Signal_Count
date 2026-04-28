@@ -1,3 +1,5 @@
+"""Health endpoint for Signal Count."""
+
 from fastapi import APIRouter
 
 

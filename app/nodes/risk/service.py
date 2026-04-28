@@ -53,9 +53,7 @@ class RiskService:
                 model=self._model, messages=prompt
             )
 
-        parsed = self._parse_response(
-            response_text, allow_text_fallback=bool(ree_receipt_hash)
-        )
+        parsed = self._parse_response(response_text, allow_text_fallback=bool(ree_receipt_hash))
         scenario_view = self._build_scenario_view(parsed)
 
         registry_peer = self._registry.get_service_for_role("risk")

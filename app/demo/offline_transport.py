@@ -1,3 +1,5 @@
+"""Offline demo transport for local UI capture without a live AXL bridge."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime

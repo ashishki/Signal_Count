@@ -1,3 +1,5 @@
+"""Structured provenance helpers for completed jobs."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -5,6 +7,8 @@ from dataclasses import dataclass
 
 @dataclass(frozen=True)
 class NodeExecutionRecord:
+    """Execution metadata for one specialist call."""
+
     node_role: str
     peer_id: str
     status: str

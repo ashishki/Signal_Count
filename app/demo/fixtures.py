@@ -1,3 +1,5 @@
+"""Replayable canned thesis fixtures for the demo UI."""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
