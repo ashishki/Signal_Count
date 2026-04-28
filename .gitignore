@@ -2,9 +2,15 @@
 __pycache__/
 .pytest_cache/
 .ruff_cache/
+.codex
 *.pyc
 *.pyo
 *.egg-info/
+market_swarm.db
 signal_count.db
 .env
 .env.*
+contracts/cache/
+contracts/out/
+broadcast/
+.runtime/
