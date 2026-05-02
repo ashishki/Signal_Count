@@ -167,6 +167,19 @@ Useful checks:
 scripts/check_axl.sh
 ```
 
+Optional multi-candidate routing:
+
+```bash
+export RISK_PEER_CANDIDATES="peer-risk-a:risk_analyst,peer-risk-b:risk_analyst"
+export REGIME_PEER_CANDIDATES="peer-regime-a:regime_analyst,peer-regime-b:regime_analyst"
+export NARRATIVE_PEER_CANDIDATES="peer-narrative-a:narrative_analyst,peer-narrative-b:narrative_analyst"
+```
+
+When candidate env vars are set, the coordinator ranks candidates by AXL
+topology health and verifier/reputation metadata when available. If the selected
+peer fails, it retries the next candidate and records the fallback chain in
+`Run Evidence`.
+
 ### Verified Local AXL Run
 
 The current implementation has been verified against a locally running Gensyn
@@ -265,19 +278,19 @@ Stop the demo processes with:
 scripts/stop_full_battle_demo.sh
 ```
 
-Current verified full-battle evidence from the April 28, 2026 recording run:
+Current verified full-battle evidence from the May 2, 2026 recording run:
 
-- Job ID: `c033560c-7a30-4668-87f4-a75559d06475`.
-- Runtime: `406s` end to end.
-- Live job completed at `+397s`; the remaining time was one-shot indexing and
+- Job ID: `3beec5c8-3a95-4058-8962-9408fb951465`.
+- Runtime: `773s` end to end.
+- Live job completed at `+760s`; the remaining time was one-shot indexing and
   evidence summary generation.
 - Roles completed: `regime`, `narrative`, `risk`.
 - REE receipt status: `validated`.
 - Chain receipts: task, three contributions, and three reputation/test payout
   receipts.
 - Native test payout size: `1000000000 wei` per role.
-- Indexed projection after replay: `tasks=6`, `contributions=15`,
-  `verifications=0`, `reputation=15`.
+- Indexed projection after replay: `tasks=9`, `contributions=23`,
+  `verifications=0`, `reputation=23`.
 
 ## Proof Console UI
 
@@ -285,7 +298,10 @@ The browser UI has been upgraded from a simple demo page into a proof console:
 
 - Capability strip shows live mode, AXL transport, REE presence, chain receipt
   status, and indexed contribution count.
-- Hero area includes the thesis form and a live mesh visualization.
+- Latest completed run appears before the thesis form and opens on the
+  verification/proof ledger surface.
+- The thesis form and replayable fixtures remain available below the completed
+  proof surface.
 - Demo fixtures remain replayable for stable walkthroughs.
 - Latest run is split into `Run Timeline`, `Risk Memo`, and `Proof Ledger`.
 - Proof ledger exposes agent registry, task trace, full hashes, REE status,
@@ -338,17 +354,17 @@ ruff format --check app/ tests/
 Current local verification:
 
 ```text
-119 passed
-ruff check app tests: pass
-ruff format --check app tests: pass
+150 passed, 1 skipped in socket-restricted sandbox
+ruff check .: pass
+ruff format --check .: pass
 ```
 
 ## Submission Notes
 
 - Category: AI
 - Emoji: ⚖️
-- Short description: AXL-powered analyst swarm that stress-tests market theses
-  into auditable risk memos.
+- Short description: Proof console for AXL-routed AI analyst work: verify every
+  agent behind the memo.
 
 ## AI Usage
 

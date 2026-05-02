@@ -1,7 +1,5 @@
 # Signal Count Gensyn Testnet Contracts
 
-Phase: 2 — Gensyn Testnet Contracts
-
 ## Network
 
 | Field | Value |
@@ -41,4 +39,5 @@ Deployer balance after deployment was `0.079999972084305578` test ETH.
 
 - The transactions above are real Gensyn Testnet deployment transactions.
 - No REE verification is claimed by these contracts.
-- No backend chain integration is started in Phase 2.
+- These contracts are the on-chain recording layer; backend chain integration is
+  configured separately by the application runtime.
