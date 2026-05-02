@@ -8,6 +8,12 @@ structured risk memo with scenarios, supporting evidence, opposing evidence,
 counter-thesis, invalidation conditions, and provenance rather than a generic
 conversational answer.
 
+Strategic product direction: Signal Count is a proof console for decentralized
+AI work. The market-risk memo is the artifact; the differentiator is that a
+judge or operator can verify which peer produced each claim, which wallet and
+hash are bound to it, whether REE evidence exists, and which Gensyn Testnet
+transactions recorded the work.
+
 ## User Roles
 
 | Role | Capabilities |
@@ -162,3 +168,94 @@ Out of scope:
 - Claiming REE or Gensyn Testnet evidence for offline preview fixtures.
 - Full archival reorg rollback beyond the configured repair window.
 - ERC20, USDC, stablecoin, or real-money rewards.
+
+## Feature Area 7 — Active Run Verification
+
+Make verification a user-visible action rather than a passive metadata table.
+
+Acceptance criteria:
+
+- A completed job exposes a structured verification bundle through
+  `GET /jobs/{job_id}/verify`.
+- Verification recomputes specialist output hashes where the stored payload is
+  available.
+- Verification checks verifier attestation signatures when signer metadata is
+  configured.
+- Verification checks REE receipt consistency when receipt content is available
+  and distinguishes `present`, `parsed`, `validated`, and `verified`.
+- Verification checks recorded Gensyn Testnet transaction hashes through RPC or
+  indexed-chain projection.
+- The proof console renders verification results as explicit pass/fail/missing
+  states without modifying the memo.
+
+Out of scope:
+
+- Treating local REE receipt hash recomputation as full REE re-execution.
+- Hiding missing verification evidence behind a generic "confirmed" badge.
+
+## Feature Area 8 — REE-Backed Inference Policy
+
+Make the REE claim precise enough to defend in judging.
+
+Acceptance criteria:
+
+- The project declares either `risk-only-ree` or `all-llm-ree` as its active
+  policy.
+- If `risk-only-ree`, the risk specialist is the hero proof path and shows
+  prompt hash, token hash, receipt hash, output hash, verifier attestation, and
+  contribution tx together.
+- If `all-llm-ree`, every stochastic specialist output is REE-backed or clearly
+  labelled as non-REE evidence.
+- Verifier scoring downgrades outputs that lack required REE evidence under the
+  active policy.
+- UI copy reserves `verified` for full verification and uses `validated` only
+  for local receipt consistency checks.
+
+Out of scope:
+
+- Claiming that all reasoning is verifiable when only one role is REE-backed.
+- Claiming receipt presence proves output quality.
+
+## Feature Area 9 — AXL Peer Selection and Fallback
+
+Make AXL coordination affect runtime behavior, not only routing labels.
+
+Acceptance criteria:
+
+- The app records peer capability state: role, service, peer ID, wallet,
+  health, latency, and recent verifier/reputation score.
+- Specialist dispatch can select from available peers based on capability and
+  score instead of relying only on static env mapping.
+- Peer selection reason is persisted in run metadata.
+- If a selected peer fails, fallback or partial behavior is explicit and
+  auditable.
+- The UI shows selected peer, selection reason, fallback status, and final
+  accepted/rejected state.
+
+Out of scope:
+
+- Open-ended autonomous peer marketplaces.
+- Unbounded agent loops.
+- Silently replacing a failed peer with local fixture output.
+
+## Feature Area 10 — Evidence-Grade Inputs
+
+Improve memo quality so the proof layer protects something worth reading.
+
+Acceptance criteria:
+
+- Market and news inputs are either real source adapters with retrieval
+  metadata or explicitly labelled demo fixtures.
+- Evidence bullets include source URL or fixture source, retrieval timestamp,
+  and source hash when available.
+- The final memo marks source quality: live source, fixture source, stale
+  source, or missing source.
+- At least one demo fixture creates material disagreement between specialists.
+- The memo highlights invalidation conditions and counter-thesis before generic
+  catalysts.
+
+Out of scope:
+
+- Trading execution.
+- Price targets.
+- Personalized financial advice.

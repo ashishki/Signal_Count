@@ -8,6 +8,9 @@ through AXL to specialist services and synthesizes the responses into a compact
 risk memo.
 
 The product is decision support, not trading execution or market prediction.
+The strategic architecture direction is proof-first: the memo is the artifact,
+but the system should make every agent contribution inspectable and eventually
+actively verifiable.
 
 ## Runtime Shape
 
@@ -31,6 +34,42 @@ Memo synthesis
   |
 SQLite job store + provenance ledger
 ```
+
+## Proof-First Shape
+
+The system exposes active verification instead of treating proof metadata as a
+passive appendix:
+
+```text
+Completed job
+  |
+Verification endpoint / UI action
+  |-- recompute specialist output hashes
+  |-- check verifier attestations/signatures
+  |-- validate or verify REE receipts according to policy
+  |-- check Gensyn Testnet tx presence
+  |-- compare indexed-chain projection
+  |
+Proof result: verified / validated / present / missing / failed
+```
+
+The proof console should make this path the primary user experience. A judge
+should not need to read raw JSON to understand what was produced by which AXL
+peer, which wallet is attributed, which output hash was recorded, which REE
+receipt exists, and which transaction backs the claim.
+
+## Architecture Priorities
+
+1. Demo reliability: direct full-battle execution, passing format checks,
+   fast prewarmed recording path, and truthful fallback labels.
+2. Verification-first product surface: `GET /jobs/{job_id}/verify` and UI
+   controls that expose output hash, attestation, REE, and chain verification.
+3. REE policy: explicitly choose `risk-only-ree` or `all-llm-ree` and reserve
+   `verified` for full verification rather than local receipt hash consistency.
+4. AXL coordination depth: peer capability registry, health/reputation-aware
+   selection, fallback, and visible selection reasons.
+5. Evidence-grade inputs: real source adapters or fixture labels with source
+   hashes and retrieval timestamps.
 
 ## Demo Runtime
 
@@ -85,7 +124,7 @@ fail through the real bridge.
 
 ## Event Indexer
 
-Phase 9 adds a local chain-event projection path beside job metadata. Indexed
+The event indexer adds a local chain-event projection path beside job metadata. Indexed
 events are stored in SQLite as `indexed_chain_events` with
 `transaction_hash:log_index` as the idempotency key. Indexed blocks and the
 polling cursor are stored separately, so replay, restart, and shallow reorg
