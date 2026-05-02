@@ -69,7 +69,7 @@ def test_home_page_renders_form_and_latest_job_summary(tmp_path: Path) -> None:
     assert "Topology Snapshot" in html
 
 
-def test_completed_run_is_first_screen_when_available(tmp_path: Path) -> None:
+def test_hero_precedes_completed_run_when_available(tmp_path: Path) -> None:
     asyncio.run(_configure_completed_job_with_trace_ledger(tmp_path))
 
     async def _exercise() -> httpx.Response:
@@ -83,8 +83,9 @@ def test_completed_run_is_first_screen_when_available(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     html = response.text
-    assert html.index("Latest Verified Run") < html.index("Run Another Thesis")
-    assert html.index("Verify Run") < html.index("Run Another Thesis")
+    assert html.index("Proof Console") < html.index("Latest Verified Run")
+    assert html.index("Run Another Thesis") < html.index("Latest Verified Run")
+    assert html.index("Verify Run") > html.index("Latest Verified Run")
     assert 'class="tab-pane active" id="tab-ledger"' in html
     assert 'id="tab-timeline"' in html
     assert "Create Verifiable Run" in html

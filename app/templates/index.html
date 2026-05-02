@@ -744,7 +744,7 @@
 
       .proof-console-layout {
         display: grid;
-        grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr);
+        grid-template-columns: minmax(0, 1.25fr) minmax(340px, 0.75fr);
         gap: 14px;
       }
 
@@ -753,6 +753,11 @@
         align-content: start;
         gap: 12px;
         min-width: 0;
+      }
+
+      .proof-column > section {
+        min-width: 0;
+        overflow: hidden;
       }
 
       .run-timeline ol {
@@ -835,6 +840,47 @@
         overflow-wrap: anywhere;
       }
 
+      .compact-table th,
+      .compact-table td {
+        padding: 8px 10px;
+      }
+
+      .agent-registry-table th:nth-child(1) {
+        width: 14%;
+      }
+
+      .agent-registry-table th:nth-child(2) {
+        width: 20%;
+      }
+
+      .agent-registry-table th:nth-child(3) {
+        width: 42%;
+      }
+
+      .agent-registry-table th:nth-child(4) {
+        width: 16%;
+      }
+
+      .agent-registry-table th:nth-child(5) {
+        width: 8%;
+      }
+
+      .reputation-table th:nth-child(1) {
+        width: 18%;
+      }
+
+      .reputation-table th:nth-child(2) {
+        width: 50%;
+      }
+
+      .reputation-table th:nth-child(3) {
+        width: 22%;
+      }
+
+      .reputation-table th:nth-child(4) {
+        width: 10%;
+      }
+
       .ledger-table tr:hover td {
         background: var(--surface-2);
       }
@@ -848,6 +894,33 @@
         border-radius: 4px;
         color: var(--accent);
         background: var(--surface-2);
+      }
+
+      .compact-id {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+
+      .identity-stack {
+        display: grid;
+        gap: 4px;
+        min-width: 0;
+      }
+
+      .identity-line {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr);
+        gap: 6px;
+        align-items: center;
+        min-width: 0;
+      }
+
+      .identity-label {
+        color: var(--text-lo);
+        font-size: 9px;
+        text-transform: uppercase;
       }
 
       .proof-details ul {
@@ -1015,9 +1088,6 @@
 
       $capability_strip
 
-      <div class="section-label">Latest Verified Run</div>
-      $latest_job_panel
-
       <section class="hero">
         <div class="hero-copy">
           <p class="eyebrow">Proof Console</p>
@@ -1068,6 +1138,9 @@
       </section>
 
       <div class="glow-divider"></div>
+
+      <div class="section-label">Latest Verified Run</div>
+      $latest_job_panel
 
       <section class="fixtures">
         <div class="section-label">Replayable Fixtures</div>

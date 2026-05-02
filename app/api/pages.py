@@ -360,8 +360,8 @@ def _render_trace_rows(
         rows.append(
             "<tr>"
             f"<td>{escape(role)}</td>"
-            f'<td><code class="id-chip">{escape(str(record.get("peer_id", "")))}</code></td>'
-            f'<td><code class="id-chip">{escape(str(attestation.get("agent_wallet", "")))}</code></td>'
+            f"<td>{_render_compact_id(record.get('peer_id'))}</td>"
+            f"<td>{_render_compact_id(attestation.get('agent_wallet'))}</td>"
             f'<td><code class="hash-chip" title="{escape(str(attestation.get("output_hash", "")))}">{escape(_short(str(attestation.get("output_hash", ""))))}</code></td>'
             f"<td>{_render_ree_cell(attestation, contribution_receipt)}</td>"
             f'<td><span class="status status-{escape(_status_class(str(status)))}">{escape(str(status))}</span></td>'
@@ -554,12 +554,33 @@ def _render_tx_cell(receipt: dict[str, object]) -> str:
     )
 
 
+def _render_compact_id(value: object, *, length: int = 22) -> str:
+    text = str(value or "")
+    if not text:
+        return ""
+    return (
+        f'<code class="id-chip compact-id" title="{escape(text)}">'
+        f"{escape(_short(text, length=length))}</code>"
+    )
+
+
+def _render_identity_stack(peer_id: object, wallet: object) -> str:
+    return (
+        '<div class="identity-stack">'
+        '<div class="identity-line"><span class="identity-label">peer</span>'
+        f"{_render_compact_id(peer_id, length=24)}</div>"
+        '<div class="identity-line"><span class="identity-label">wallet</span>'
+        f"{_render_compact_id(wallet, length=24)}</div>"
+        "</div>"
+    )
+
+
 def _render_agent_registry(
     provenance_ledger: list[dict[str, object]],
     run_metadata: dict[str, object],
 ) -> str:
     if not provenance_ledger:
-        rows = '<tr><td colspan="6">No agent registry evidence recorded.</td></tr>'
+        rows = '<tr><td colspan="5">No agent registry evidence recorded.</td></tr>'
     else:
         attestations = _by_role(run_metadata.get("verification_attestations"))
         reputation_by_role = _reputation_by_role(run_metadata.get("reputation_updates"))
@@ -568,8 +589,9 @@ def _render_agent_registry(
                 "<tr>"
                 f"<td>{escape(str(record.get('node_role', '')))}</td>"
                 f"<td>{escape(str(record.get('service_name', '')))}</td>"
-                f'<td><code class="id-chip">{escape(str(record.get("peer_id", "")))}</code></td>'
-                f'<td><code class="id-chip">{escape(str(attestations.get(str(record.get("node_role", "")), {}).get("agent_wallet", "")))}</code></td>'
+                "<td>"
+                f"{_render_identity_stack(record.get('peer_id'), attestations.get(str(record.get('node_role', '')), {}).get('agent_wallet'))}"
+                "</td>"
                 f'<td><span class="status status-{escape(_status_class(str(record.get("status", ""))))}">{escape(str(record.get("status", "")))}</span></td>'
                 f"<td>{escape(reputation_by_role.get(str(record.get('node_role', '')), ''))}</td>"
                 "</tr>"
@@ -579,9 +601,9 @@ def _render_agent_registry(
     return (
         '<section class="agent-registry">'
         "<h3>Agent Registry</h3>"
-        '<table class="ledger-table compact-table">'
-        "<thead><tr><th>Role</th><th>Service</th><th>AXL Peer</th>"
-        "<th>Wallet</th><th>Status</th><th>Reputation</th></tr></thead>"
+        '<table class="ledger-table compact-table agent-registry-table">'
+        "<thead><tr><th>Role</th><th>Service</th><th>Identity</th>"
+        "<th>Status</th><th>Rep.</th></tr></thead>"
         f"<tbody>{rows}</tbody>"
         "</table>"
         "</section>"
@@ -660,7 +682,7 @@ def _render_reputation_panel(
             rows.append(
                 "<tr>"
                 f"<td>{escape(str(update.get('node_role', '')))}</td>"
-                f'<td><code class="id-chip">{escape(str(update.get("peer_id", "")))}</code></td>'
+                f"<td>{_render_compact_id(update.get('peer_id'), length=26)}</td>"
                 f"<td>{escape(str(update.get('verifier_status', '')))}</td>"
                 f"<td>{escape(str(update.get('reputation_points', '')))}</td>"
                 "</tr>"
@@ -669,7 +691,7 @@ def _render_reputation_panel(
         rows.append(
             "<tr>"
             f"<td>{escape(entry.node_role)}</td>"
-            f'<td><code class="id-chip">{escape(entry.agent_wallet)}</code></td>'
+            f"<td>{_render_compact_id(entry.agent_wallet, length=26)}</td>"
             "<td>indexed_chain</td>"
             f"<td>{entry.reputation_points:.2f}</td>"
             "</tr>"
@@ -679,7 +701,7 @@ def _render_reputation_panel(
     return (
         '<section class="reputation-panel">'
         "<h3>Reputation Ledger</h3>"
-        '<table class="ledger-table compact-table">'
+        '<table class="ledger-table compact-table reputation-table">'
         "<thead><tr><th>Role</th><th>Peer / Wallet</th><th>Status</th>"
         "<th>Points</th></tr></thead>"
         f"<tbody>{''.join(rows)}</tbody>"
