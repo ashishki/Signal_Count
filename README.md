@@ -64,6 +64,39 @@ Verifier
 Memo synthesis + provenance ledger
 ```
 
+```mermaid
+flowchart LR
+    A[Market thesis] --> B[Coordinator]
+    B --> C[AXL MCP route]
+    C --> D[Regime specialist]
+    C --> E[Narrative specialist]
+    C --> F[Risk specialist]
+    D --> G[Verifier]
+    E --> G
+    F --> H[REE receipt path]
+    H --> G
+    G --> I[Risk memo]
+    G --> J[Hashes and attestations]
+    J --> K[Gensyn Testnet receipts]
+    K --> L[Local chain indexer]
+    I --> M[Proof console]
+    L --> M
+```
+
+## Screenshots
+
+### Main Proof Console
+
+![Signal Count main proof console](docs/assets/signal-count-main-console.png)
+
+### Agent Registry And Reputation
+
+![Signal Count agent registry and reputation ledger](docs/assets/signal-count-agent-registry-reputation.png)
+
+### Chain Receipts And Metadata
+
+![Signal Count chain receipts and run metadata](docs/assets/signal-count-chain-receipts.png)
+
 ## Repository Layout
 
 ```text
@@ -298,10 +331,9 @@ The browser UI has been upgraded from a simple demo page into a proof console:
 
 - Capability strip shows live mode, AXL transport, REE presence, chain receipt
   status, and indexed contribution count.
-- Latest completed run appears before the thesis form and opens on the
-  verification/proof ledger surface.
-- The thesis form and replayable fixtures remain available below the completed
-  proof surface.
+- The thesis form stays at the top of the page, and the latest completed run
+  opens directly below it on the verification/proof ledger surface.
+- Replayable fixtures remain available below the completed proof surface.
 - Demo fixtures remain replayable for stable walkthroughs.
 - Latest run is split into `Run Timeline`, `Risk Memo`, and `Proof Ledger`.
 - Proof ledger exposes agent registry, task trace, full hashes, REE status,
