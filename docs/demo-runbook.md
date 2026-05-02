@@ -1,5 +1,122 @@
 # Signal Count Demo Runbook
 
+## Judge-First Demo Target
+
+The winning demo should start from a completed proof console, not from setup or
+a blank thesis form.
+
+One-sentence pitch:
+
+```text
+Signal Count lets you verify every AI agent behind a risk memo: AXL peer,
+wallet, output hash, REE receipt, verifier attestation, and Gensyn Testnet tx.
+```
+
+Target 90-second flow after prewarm:
+
+1. Open `/` after the run is prewarmed. The first screen should already show
+   `Latest Verified Run` and the active `Verify Run` / proof ledger tab.
+2. Say: "Do not trust the memo. Verify every agent behind it."
+3. Click `open proof bundle` and show output hashes, verifier attestations, REE,
+   and chain status. Say which rows are `verified`, `validated`, `present`, or
+   `missing`.
+4. Return to the proof console and show `Task Trace`: role, AXL peer, wallet,
+   output hash, REE status, and tx link.
+5. Show `Risk REE Proof` and explain that `validated` means local receipt
+   consistency, while `verified` is reserved for checks that recompute or verify
+   the underlying proof/signature.
+6. Open one Gensyn Testnet explorer link if the run has real chain receipts.
+7. Show `Run Evidence` and topology / peer selection. If fallback happened,
+   point at `fallback_from=...` and the attempted peer chain.
+8. Switch to `Risk Memo`, show source quality, counter-thesis, and invalidation
+   triggers. Say: "This is decision support, not trading advice."
+9. End with: "AXL makes coordination visible; REE and receipts make the AI work
+   auditable."
+
+30-second sponsor pitch:
+
+```text
+Signal Count is a proof console for AXL-routed AI analyst work. A coordinator
+routes regime, narrative, and risk specialists through AXL, then the UI lets a
+judge verify the run: peer IDs, wallet attestations, output hashes, REE receipt
+metadata, Gensyn Testnet txs, and source quality. The point is not that agents
+wrote a memo. The point is that every agent behind the memo is auditable.
+```
+
+Remove from the judge-visible flow:
+
+- long terminal setup
+- raw JSON unless asked
+- random mesh animation metrics as proof
+- native test payout discussion unless the judge asks about incentives
+- offline fixture evidence unless it is clearly labelled as non-live
+
+## Current Recording State
+
+Current status from May 1, 2026:
+
+- `scripts/run_full_battle_demo.sh` now executes directly and supports
+  `--preflight-only`.
+- Required Docker images are available locally: `ree` / `gensynai/ree:v0.2.0`
+  and `gensyn-axl-local`.
+- Full-battle preflight passes outside the sandbox when the recording ports are
+  free.
+- The latest full-battle run completed successfully and wrote artifacts to
+  `.runtime/full-battle/`.
+- The proof console is currently meant to be recorded from a prewarmed completed
+  run, not from terminal setup.
+- CPU-only REE can exceed 900 seconds on some local machines. The full-battle
+  runner uses `FULL_BATTLE_JOB_TIMEOUT_SECONDS=1500` by default; override it
+  only when you know the local REE path is faster or slower.
+
+Run this before final recording:
+
+```bash
+scripts/run_full_battle_demo.sh --preflight-only
+```
+
+Run the latest-artifact rehearsal before opening the browser:
+
+```bash
+scripts/verify_latest_artifact.sh
+```
+
+This validates `.runtime/full-battle` locally and writes
+`.runtime/full-battle/rehearsal-report.json`. If the proof console is already
+running at `http://127.0.0.1:8004`, it also fetches the live
+`/jobs/{job_id}/verify` bundle. To make the live proof-console check mandatory,
+run:
+
+```bash
+scripts/verify_latest_artifact.sh --require-live
+```
+
+To replay the saved full-battle artifact without starting the app, run:
+
+```bash
+scripts/replay_full_battle_artifact.sh
+```
+
+This writes `.runtime/full-battle/artifact-replay-report.json` and labels old
+artifact checks as `present_only` when the saved job lacks repeat-validation
+material such as `specialist_responses` or full REE receipt body/path.
+
+If `http://127.0.0.1:8004` is already serving the saved proof console, preflight
+will fail on the occupied app port. Stop that UI before running a new full-battle
+capture.
+
+Current browser walkthrough target:
+
+```text
+http://127.0.0.1:8004
+```
+
+Current proof bundle:
+
+```text
+http://127.0.0.1:8004/jobs/10ffc70d-1149-490a-8287-51c74d36cf01/verify
+```
+
 ## Offline Preview
 
 Use this mode for stable screenshots and UI walkthroughs when a live AXL mesh is
@@ -194,46 +311,44 @@ after recording:
 scripts/stop_full_battle_demo.sh
 ```
 
-Current verified full-battle reference run from April 28, 2026:
+Current verified full-battle reference run from May 2, 2026:
 
-- Job ID: `c033560c-7a30-4668-87f4-a75559d06475`.
-- Runtime: `406s` end to end.
-- Live job completed at `+397s`; the remaining time was one-shot indexing and
+- Job ID: `3beec5c8-3a95-4058-8962-9408fb951465`.
+- Runtime: `773s` end to end.
+- Live job completed at `+760s`; the remaining time was one-shot indexing and
   evidence summary generation.
 - Roles: `regime`, `narrative`, and `risk` completed.
 - REE status: `validated`.
 - Chain receipts: 7 transaction receipts.
-- Indexed projection after replay: `tasks=6`, `contributions=15`,
-  `verifications=0`, `reputation=15`.
+- Live verification bundle: `output_hashes=verified`, `attestations=present`,
+  `ree=validated`, `chain=verified`.
+- Indexed projection after replay: `tasks=9`, `contributions=23`,
+  `verifications=0`, `reputation=23`.
+- Latest evidence pack:
+  `.runtime/submission-pack/20260502_125554`.
 
 ## Screenshot Set
 
 Capture these screenshots in order:
 
-1. Home and thesis input.
-2. Filled thesis form.
-3. Latest completed job with `partial=false`.
-4. Scenario table.
-5. Risks and invalidation conditions.
-6. Memo evidence bullets with visible source metadata.
-7. `Task Trace` ledger with AXL peer, wallet, output hash, REE status, and tx
-   link if chain receipts are configured.
-8. Run evidence, dispatch targets, and topology public keys.
-9. Reputation/test payout receipt evidence if enabled for testnet.
-10. Proof console hero, mesh visualization, capability strip, and tabbed latest
-    run panel.
+1. Completed proof console with active `Verify Run` tab.
+2. `/jobs/{job_id}/verify` proof bundle.
+3. `Risk REE Proof` receipt detail.
+4. `Task Trace` with AXL peer, wallet, output hash, REE status, and tx link.
+5. `Run Evidence` with peer selection/fallback and topology public keys.
+6. `Risk Memo` source quality, counter-thesis, and invalidation triggers.
+7. Gensyn Testnet explorer tx when real chain receipts are configured.
+8. Replayable fixtures and thesis form, only after the completed proof surface.
 
 ## Video Structure
 
-- 0:00-0:20: what Signal Count does.
-- 0:20-0:50: show AXL topology and specialist services.
-- 0:50-1:40: show the full battle terminal logs while the live job runs.
-- 1:40-2:30: show final memo and source-linked evidence.
-- 2:30-3:20: show `Task Trace`, REE receipt status, explorer links, and
-  reputation evidence.
-- 3:20-3:45: show event-indexed projection/recovery behavior if using the
-  indexer in the demo.
-- 3:45-4:00: explain why it is decision support, not a trading bot.
+- 0:00-0:10: one sentence: "Do not trust the memo. Verify every agent behind
+  it."
+- 0:10-0:30: active `Verify Run` tab and proof bundle.
+- 0:30-0:55: `Task Trace`, AXL peer IDs, REE status, and chain tx.
+- 0:55-1:15: topology / peer selection / fallback evidence.
+- 1:15-1:30: memo source quality, counter-thesis, invalidation triggers, and
+  claim boundary: decision support, not trading advice.
 
 ## Claim Boundaries
 

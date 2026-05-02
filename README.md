@@ -1,12 +1,19 @@
 # Signal Count
 
-AXL-powered market thesis review for the ETHGlobal OpenAgents / Gensyn track.
+Proof console for AXL-routed market thesis review in the ETHGlobal OpenAgents /
+Gensyn track.
+
+Do not trust the memo. Verify every agent behind it.
 
 Signal Count is not a trading bot. A user submits one market thesis, an asset,
 and a time horizon. A coordinator dispatches structured analysis requests to
 specialist services through AXL, collects their responses, and produces an
 auditable risk memo with scenarios, catalysts, risks, invalidation triggers,
 and provenance.
+
+Each completed run exposes the AXL peer, wallet, output hash, verifier
+attestation, REE evidence when enabled, and Gensyn Testnet receipts when
+configured.
 
 ## What It Does
 

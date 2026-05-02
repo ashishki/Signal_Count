@@ -4,6 +4,24 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${ROOT_DIR}"
 
+PREFLIGHT_ONLY=0
+case "${1:-}" in
+  --preflight-only)
+    PREFLIGHT_ONLY=1
+    ;;
+  -h|--help)
+    echo "Usage: scripts/run_full_battle_demo.sh [--preflight-only]"
+    exit 0
+    ;;
+  "")
+    ;;
+  *)
+    echo "Unknown argument: $1" >&2
+    echo "Usage: scripts/run_full_battle_demo.sh [--preflight-only]" >&2
+    exit 2
+    ;;
+esac
+
 PYTHON="${PYTHON:-${ROOT_DIR}/.venv/bin/python}"
 export PATH="${ROOT_DIR}/.venv/bin:${PATH}"
 RUNTIME_DIR="${SIGNAL_COUNT_BATTLE_RUNTIME_DIR:-${ROOT_DIR}/.runtime/full-battle}"
@@ -18,24 +36,7 @@ MESH_DIR="${MESH_DIR:-${RUNTIME_DIR}/axl-mesh}"
 INDEXER_CONFIRMATIONS="${INDEXER_CONFIRMATIONS:-0}"
 NATIVE_TEST_PAYOUT_WEI="${NATIVE_TEST_PAYOUT_WEI:-1000000000}"
 NATIVE_TEST_PAYOUT_MAX_WEI="${NATIVE_TEST_PAYOUT_MAX_WEI:-1000000000000}"
-
-mkdir -p "${RUNTIME_DIR}" "${LOG_DIR}" "${MESH_DIR}"
-
-if [[ -f "${PIDS_FILE}" ]]; then
-  while read -r pid; do
-    [[ -z "${pid}" ]] && continue
-    if kill -0 "${pid}" >/dev/null 2>&1; then
-      echo "Runtime PID ${pid} is already alive. Run scripts/stop_full_battle_demo.sh first." >&2
-      exit 1
-    fi
-  done <"${PIDS_FILE}"
-fi
-
-if [[ -s "${SUMMARY_FILE}" ]]; then
-  cp "${SUMMARY_FILE}" "${SUMMARY_FILE}.$(date +%Y%m%d_%H%M%S).bak"
-fi
-: >"${SUMMARY_FILE}"
-: >"${PIDS_FILE}"
+FULL_BATTLE_JOB_TIMEOUT_SECONDS="${FULL_BATTLE_JOB_TIMEOUT_SECONDS:-1500}"
 
 START_TS="$(date +%s)"
 
@@ -64,6 +65,9 @@ else
 fi
 
 append_summary() {
+  if (( PREFLIGHT_ONLY )); then
+    return 0
+  fi
   printf '[%s +%ss] %s\n' "$(date -Is)" "$(elapsed)" "$*" >>"${SUMMARY_FILE}"
 }
 
@@ -144,6 +148,133 @@ require_command() {
   fi
 }
 
+preflight_errors=0
+
+preflight_error() {
+  preflight_errors=$((preflight_errors + 1))
+  fail "$*"
+}
+
+check_command() {
+  if command -v "$1" >/dev/null 2>&1; then
+    ok "Command found: $1"
+  else
+    preflight_error "Missing required command: $1"
+  fi
+}
+
+check_file_executable() {
+  if [[ -x "$1" ]]; then
+    ok "Executable found: $1"
+  else
+    preflight_error "Missing executable: $1"
+  fi
+}
+
+check_env_value() {
+  if [[ -n "${!1:-}" ]]; then
+    ok "Environment configured: $1"
+  else
+    preflight_error "Missing environment value: $1"
+  fi
+}
+
+check_docker_image() {
+  if docker image inspect "$1" >/dev/null 2>&1; then
+    ok "Docker image found: $1"
+  else
+    preflight_error "Missing Docker image: $1"
+  fi
+}
+
+check_port_free() {
+  local port="$1"
+  local label="$2"
+  local status
+  if [[ ! -x "${PYTHON}" ]]; then
+    warn "Skipping port check for ${label}; Python is not executable at ${PYTHON}"
+    return 0
+  fi
+  set +e
+  "${PYTHON}" - "${port}" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+try:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.settimeout(0.2)
+        raise SystemExit(0 if sock.connect_ex(("127.0.0.1", port)) != 0 else 1)
+except PermissionError:
+    raise SystemExit(2)
+PY
+  status=$?
+  set -e
+  case "${status}" in
+    0)
+      ok "Port free: ${label} ${port}"
+      ;;
+    1)
+      preflight_error "Port already in use: ${label} ${port}"
+      ;;
+    2)
+      warn "Skipping port check for ${label} ${port}; socket creation is not permitted"
+      ;;
+    *)
+      preflight_error "Unable to check port: ${label} ${port}"
+      ;;
+  esac
+}
+
+run_preflight_only() {
+  banner
+  section "Preflight"
+
+  check_command curl
+  check_command docker
+  check_command forge
+  check_command git
+  check_command openssl
+  check_file_executable "${PYTHON}"
+
+  load_env_file "${ROOT_DIR}/.env"
+  load_env_file "${ENV_FILE}"
+  check_env_value GENSYN_RPC_URL
+  if [[ -n "${DEPLOYER_PRIVATE_KEY:-}" || -n "${CHAIN_WRITER_PRIVATE_KEY:-}" ]]; then
+    ok "Environment configured: DEPLOYER_PRIVATE_KEY or CHAIN_WRITER_PRIVATE_KEY"
+  else
+    preflight_error "Missing environment value: DEPLOYER_PRIVATE_KEY or CHAIN_WRITER_PRIVATE_KEY"
+  fi
+
+  if [[ -x "${REE_REPO_DIR}/ree.sh" ]]; then
+    ok "Gensyn REE checkout ready: ${REE_REPO_DIR}"
+  else
+    preflight_error "Missing Gensyn REE checkout: ${REE_REPO_DIR}/ree.sh"
+  fi
+
+  if docker image inspect ree >/dev/null 2>&1 || docker image inspect gensynai/ree:v0.2.0 >/dev/null 2>&1; then
+    ok "REE Docker image found: ree or gensynai/ree:v0.2.0"
+  else
+    preflight_error "Missing REE Docker image: ree or gensynai/ree:v0.2.0"
+  fi
+  check_docker_image gensyn-axl-local
+
+  check_port_free "${APP_PORT}" "app"
+  check_port_free 9022 "AXL node A"
+  check_port_free 9024 "AXL node B"
+  check_port_free 9014 "AXL MCP router"
+  check_port_free 7161 "regime specialist"
+  check_port_free 7162 "narrative specialist"
+  check_port_free 7163 "risk specialist"
+
+  if (( preflight_errors )); then
+    fail "Preflight failed with ${preflight_errors} issue(s)"
+    exit 1
+  fi
+  ok "Preflight passed"
+  exit 0
+}
+
 load_env_file() {
   local file="$1"
   [[ -f "${file}" ]] || return 0
@@ -152,6 +283,28 @@ load_env_file() {
   source "${file}"
   set +a
 }
+
+if (( PREFLIGHT_ONLY )); then
+  run_preflight_only
+fi
+
+mkdir -p "${RUNTIME_DIR}" "${LOG_DIR}" "${MESH_DIR}"
+
+if [[ -f "${PIDS_FILE}" ]]; then
+  while read -r pid; do
+    [[ -z "${pid}" ]] && continue
+    if kill -0 "${pid}" >/dev/null 2>&1; then
+      echo "Runtime PID ${pid} is already alive. Run scripts/stop_full_battle_demo.sh first." >&2
+      exit 1
+    fi
+  done <"${PIDS_FILE}"
+fi
+
+if [[ -s "${SUMMARY_FILE}" ]]; then
+  cp "${SUMMARY_FILE}" "${SUMMARY_FILE}.$(date +%Y%m%d_%H%M%S).bak"
+fi
+: >"${SUMMARY_FILE}"
+: >"${PIDS_FILE}"
 
 banner
 section "Preflight"
@@ -284,10 +437,11 @@ export REE_CPU_ONLY=1
 export SIGNAL_COUNT_NATIVE_TEST_PAYOUTS=1
 export NATIVE_TEST_PAYOUT_WEI
 export NATIVE_TEST_PAYOUT_MAX_WEI
+export FULL_BATTLE_JOB_TIMEOUT_SECONDS
 export AXL_LOCAL_BASE_URL="http://127.0.0.1:9022"
 export AXL_MCP_ROUTER_URL="http://127.0.0.1:9014"
-export AXL_DISPATCH_TIMEOUT_SECONDS="${AXL_DISPATCH_TIMEOUT_SECONDS:-900}"
-export MCP_ROUTER_FORWARD_TIMEOUT_SECONDS="${MCP_ROUTER_FORWARD_TIMEOUT_SECONDS:-900}"
+export AXL_DISPATCH_TIMEOUT_SECONDS="${FULL_BATTLE_JOB_TIMEOUT_SECONDS}"
+export MCP_ROUTER_FORWARD_TIMEOUT_SECONDS="${FULL_BATTLE_JOB_TIMEOUT_SECONDS}"
 
 section "AXL Mesh"
 log "Preparing persistent AXL mesh in ${MESH_DIR}"
@@ -363,7 +517,7 @@ request = Request(
     method="POST",
 )
 started = time.time()
-with urlopen(request, timeout=900) as response:  # noqa: S310
+with urlopen(request, timeout=float(os.environ.get("FULL_BATTLE_JOB_TIMEOUT_SECONDS", "1500"))) as response:  # noqa: S310
     created = json.loads(response.read().decode("utf-8"))
 job_id = created["job_id"]
 with urlopen(f"{app_url}/jobs/{job_id}", timeout=60) as response:  # noqa: S310
