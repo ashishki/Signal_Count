@@ -1,7 +1,7 @@
 import pytest
 
 from app.axl.client import AXLClient
-from app.axl.registry import AXLRegistry
+from app.axl.registry import AXLCapabilityRegistry, AXLRegistry
 from app.config.settings import Settings
 
 
@@ -47,3 +47,51 @@ def test_registry_raises_value_error_for_unknown_role() -> None:
 
     with pytest.raises(ValueError, match="unknown role 'coordinator'"):
         registry.get_service_for_role("coordinator")
+
+
+def test_capability_registry_lists_role_candidates() -> None:
+    settings = Settings()
+    registry = AXLCapabilityRegistry(AXLRegistry(settings))
+
+    candidates = registry.list_candidates(
+        "risk",
+        reputation_updates=[
+            {
+                "node_role": "risk",
+                "peer_id": "peer-risk-example",
+                "reputation_points": 91.5,
+            }
+        ],
+    )
+    selection = registry.select_for_role("risk")
+
+    assert candidates[0].role == "risk"
+    assert candidates[0].peer_id == "peer-risk-example"
+    assert candidates[0].service_name == "risk_analyst"
+    assert candidates[0].health == "configured"
+    assert candidates[0].reputation_score == 91.5
+    assert selection.service.peer_id == "peer-risk-example"
+    assert selection.reason == "capability:static-role-match"
+
+
+def test_capability_registry_selects_topology_live_candidate() -> None:
+    settings = Settings(
+        risk_peer_candidates=("peer-risk-down:risk_analyst,peer-risk-up:risk_analyst")
+    )
+    registry = AXLCapabilityRegistry(AXLRegistry(settings))
+
+    candidates = registry.list_candidates(
+        "risk",
+        topology_snapshot={"peers": ["peer-risk-up"]},
+    )
+    selection = registry.select_for_role(
+        "risk",
+        topology_snapshot={"peers": ["peer-risk-up"]},
+    )
+
+    assert [(candidate.peer_id, candidate.health) for candidate in candidates] == [
+        ("peer-risk-down", "down"),
+        ("peer-risk-up", "up"),
+    ]
+    assert selection.service.peer_id == "peer-risk-up"
+    assert selection.reason == "capability:topology-up"

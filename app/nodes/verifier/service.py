@@ -26,9 +26,19 @@ class VerifierService:
         *,
         acceptance_threshold: float = 0.5,
         verifier_private_key: str = "",
+        ree_policy: str = "risk-only-ree",
+        enforce_ree_policy: bool = False,
     ) -> None:
         self._acceptance_threshold = acceptance_threshold
         self._verifier_private_key = verifier_private_key
+        self._ree_policy = ree_policy
+        self._enforce_ree_policy = enforce_ree_policy
+
+    def run_metadata(self) -> dict[str, object]:
+        return {
+            "ree_policy": self._ree_policy,
+            "ree_policy_enforced": self._enforce_ree_policy,
+        }
 
     def verify_signed_execution(
         self,
@@ -49,6 +59,11 @@ class VerifierService:
                     output_hash=signed_execution.signature.output_hash,
                     ree_receipt_hash=response.ree_receipt_hash,
                     receipt_status=response.receipt_status,
+                    ree_prompt_hash=response.ree_prompt_hash,
+                    ree_tokens_hash=response.ree_tokens_hash,
+                    ree_model_name=response.ree_model_name,
+                    ree_receipt_body=response.ree_receipt_body,
+                    ree_receipt_path=response.ree_receipt_path,
                 )
             )
 
@@ -70,6 +85,9 @@ class VerifierService:
         breakdown = score_specialist_response(response, task)
         score = breakdown.total
         reasons = _score_reasons(response=response, score=score)
+        if self._missing_required_ree(response):
+            score = min(score, self._acceptance_threshold - 0.01)
+            reasons.append(f"required_ree_missing:{self._ree_policy}")
         status = "accepted" if score >= self._acceptance_threshold else "rejected"
         if status == "rejected":
             reasons.append("score_below_threshold")
@@ -87,6 +105,11 @@ class VerifierService:
                 output_hash=output_hash or canonical_json_hash(response),
                 ree_receipt_hash=response.ree_receipt_hash,
                 receipt_status=response.receipt_status,
+                ree_prompt_hash=response.ree_prompt_hash,
+                ree_tokens_hash=response.ree_tokens_hash,
+                ree_model_name=response.ree_model_name,
+                ree_receipt_body=response.ree_receipt_body,
+                ree_receipt_path=response.ree_receipt_path,
             )
         )
 
@@ -99,6 +122,14 @@ class VerifierService:
         return [
             self.verify_response(task=task, response=response) for response in responses
         ]
+
+    def _missing_required_ree(self, response: SpecialistResponse) -> bool:
+        if not self._enforce_ree_policy:
+            return False
+        required_roles = _required_ree_roles(self._ree_policy)
+        if response.node_role not in required_roles:
+            return False
+        return not response.ree_receipt_hash
 
     def _sign_if_configured(
         self,
@@ -137,3 +168,12 @@ def _score_reasons(response: SpecialistResponse, score: float) -> list[str]:
     if response.risks:
         reasons.append("risks_present")
     return reasons
+
+
+def _required_ree_roles(ree_policy: str) -> set[str]:
+    normalized = ree_policy.strip().lower().replace("_", "-")
+    if normalized == "risk-only-ree":
+        return {"risk"}
+    if normalized == "all-llm-ree":
+        return {"narrative", "risk"}
+    return set()

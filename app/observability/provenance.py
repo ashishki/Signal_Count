@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,8 @@ class NodeExecutionRecord:
     service_name: str = ""
     transport: str = ""
     dispatch_target: str = ""
+    selection_reason: str = ""
+    attempted_peer_ids: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, object]:
         payload: dict[str, object] = {
@@ -30,4 +32,8 @@ class NodeExecutionRecord:
             payload["transport"] = self.transport
         if self.dispatch_target:
             payload["dispatch_target"] = self.dispatch_target
+        if self.selection_reason:
+            payload["selection_reason"] = self.selection_reason
+        if self.attempted_peer_ids:
+            payload["attempted_peer_ids"] = list(self.attempted_peer_ids)
         return payload

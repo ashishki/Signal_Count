@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 from uuid import UUID
 
@@ -6,9 +7,11 @@ import httpx
 from httpx import ASGITransport
 
 from app.chain.receipts import ChainReceipt, JobChainReceipts
+from app.chain.verification import ChainTxVerification
 from app.coordinator.service import CoordinatorDispatchResult
 from app.coordinator.synthesis import MemoSynthesisService
 from app.evaluation.reputation import build_reputation_updates
+from app.identity.hashing import canonical_json_hash
 from app.main import app
 from app.schemas.contracts import (
     ScenarioView,
@@ -17,6 +20,9 @@ from app.schemas.contracts import (
     VerificationAttestation,
 )
 from app.store import JobStore
+
+
+REE_FIXTURES = Path(__file__).parent / "fixtures" / "ree"
 
 
 class StubCoordinator:
@@ -118,6 +124,16 @@ class StubChainReceiptService:
         )
 
 
+class StubChainTxVerifier:
+    def __init__(self, outcomes: dict[str, ChainTxVerification]) -> None:
+        self.outcomes = outcomes
+        self.calls: list[str] = []
+
+    def verify_transaction(self, tx_hash: str) -> ChainTxVerification:
+        self.calls.append(tx_hash)
+        return self.outcomes[tx_hash]
+
+
 def _specialist_response(
     job_id: str,
     node_role: str,
@@ -150,6 +166,8 @@ def _configure_test_store(tmp_path: Path) -> None:
     )
     if hasattr(app.state, "chain_receipt_service"):
         delattr(app.state, "chain_receipt_service")
+    if hasattr(app.state, "chain_tx_verifier"):
+        delattr(app.state, "chain_tx_verifier")
     asyncio.run(app.state.job_store.initialize())
 
 
@@ -321,6 +339,432 @@ def test_job_persists_chain_receipts(tmp_path: Path) -> None:
     ]
 
 
+def test_job_verify_endpoint_returns_proof_bundle(tmp_path: Path) -> None:
+    _configure_test_store(tmp_path)
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(
+            run_metadata={
+                "verification_attestations": [
+                    {
+                        "job_id": "job-placeholder",
+                        "node_role": "risk",
+                        "peer_id": "peer-risk-test",
+                        "status": "accepted",
+                        "score": 0.91,
+                        "output_hash": "0x" + "11" * 32,
+                        "ree_receipt_hash": "sha256:" + "22" * 32,
+                        "receipt_status": "validated",
+                    }
+                ],
+                "chain_receipts": [
+                    {
+                        "kind": "contribution",
+                        "status": "confirmed",
+                        "role": "risk",
+                        "tx_hash": "0x" + "33" * 32,
+                        "explorer_url": (
+                            "https://gensyn-testnet.explorer.alchemy.com/tx/"
+                            + "0x"
+                            + "33" * 32
+                        ),
+                        "ree_receipt_hash": "sha256:" + "22" * 32,
+                        "ree_status": "validated",
+                    }
+                ],
+            }
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    assert payload["status"] == "validated"
+    checks = payload["checks"]
+    assert checks["output_hashes"]["status"] == "present"
+    assert checks["output_hashes"]["items"][0]["output_hash"] == "0x" + "11" * 32
+    assert checks["attestations"]["status"] == "present"
+    assert checks["ree"]["status"] == "validated"
+    assert checks["ree"]["items"][0]["receipt_hash"] == "sha256:" + "22" * 32
+    assert checks["chain"]["status"] == "present"
+    assert checks["chain"]["items"][0]["tx_hash"] == "0x" + "33" * 32
+
+
+def test_job_verify_endpoint_marks_missing_evidence(tmp_path: Path) -> None:
+    _configure_test_store(tmp_path)
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(run_metadata={})
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    assert payload["status"] == "missing"
+    assert payload["checks"]["output_hashes"] == {"status": "missing", "items": []}
+    assert payload["checks"]["attestations"] == {"status": "missing", "items": []}
+    assert payload["checks"]["ree"] == {"status": "missing", "items": []}
+    assert payload["checks"]["chain"] == {"status": "missing", "items": []}
+
+
+def test_job_verify_endpoint_recomputes_specialist_output_hash(
+    tmp_path: Path,
+) -> None:
+    _configure_test_store(tmp_path)
+    response = _specialist_response(
+        job_id="job-output-hash",
+        node_role="risk",
+        peer_id="peer-risk-test",
+        summary="Risk output is structured.",
+        signals=[],
+        risks=["Support can fail."],
+        scenario_view=ScenarioView(bull=0.3, base=0.4, bear=0.3),
+    ).model_dump(mode="json")
+    output_hash = canonical_json_hash(response)
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(
+            run_metadata={
+                "verification_attestations": [
+                    {
+                        "job_id": "job-placeholder",
+                        "node_role": "risk",
+                        "peer_id": "peer-risk-test",
+                        "status": "accepted",
+                        "score": 0.91,
+                        "output_hash": output_hash,
+                    }
+                ],
+                "specialist_responses": [response],
+            }
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    output_hashes = payload["checks"]["output_hashes"]
+    assert output_hashes["status"] == "verified"
+    assert output_hashes["items"][0]["status"] == "verified"
+    assert output_hashes["items"][0]["output_hash"] == output_hash
+    assert output_hashes["items"][0]["recomputed_output_hash"] == output_hash
+
+
+def test_job_verify_endpoint_fails_tampered_specialist_output_hash(
+    tmp_path: Path,
+) -> None:
+    _configure_test_store(tmp_path)
+    response = _specialist_response(
+        job_id="job-output-hash",
+        node_role="risk",
+        peer_id="peer-risk-test",
+        summary="Risk output is structured.",
+        signals=[],
+        risks=["Support can fail."],
+        scenario_view=ScenarioView(bull=0.3, base=0.4, bear=0.3),
+    ).model_dump(mode="json")
+    output_hash = canonical_json_hash(response)
+    response["summary"] = "Tampered after attestation."
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(
+            run_metadata={
+                "verification_attestations": [
+                    {
+                        "job_id": "job-placeholder",
+                        "node_role": "risk",
+                        "peer_id": "peer-risk-test",
+                        "status": "accepted",
+                        "score": 0.91,
+                        "output_hash": output_hash,
+                    }
+                ],
+                "specialist_responses": [response],
+            }
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    output_hashes = payload["checks"]["output_hashes"]
+    assert payload["status"] == "failed"
+    assert output_hashes["status"] == "failed"
+    assert output_hashes["items"][0]["status"] == "failed"
+    assert output_hashes["items"][0]["output_hash"] == output_hash
+    assert output_hashes["items"][0]["recomputed_output_hash"] != output_hash
+
+
+def test_job_verify_endpoint_rpc_verifies_confirmed_chain_receipt(
+    tmp_path: Path,
+) -> None:
+    _configure_test_store(tmp_path)
+    tx_hash = "0x" + "44" * 32
+    app.state.chain_tx_verifier = StubChainTxVerifier(
+        {
+            tx_hash: ChainTxVerification(
+                tx_hash=tx_hash,
+                status="verified",
+                rpc_status="confirmed",
+                block_number=123,
+                transaction_index=2,
+            )
+        }
+    )
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(
+            run_metadata={
+                "chain_receipts": [
+                    {
+                        "kind": "task",
+                        "status": "confirmed",
+                        "tx_hash": tx_hash,
+                        "explorer_url": (
+                            "https://gensyn-testnet.explorer.alchemy.com/tx/" + tx_hash
+                        ),
+                    }
+                ],
+            }
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    chain = payload["checks"]["chain"]
+    assert chain["status"] == "verified"
+    assert chain["items"] == [
+        {
+            "kind": "task",
+            "role": "",
+            "status": "verified",
+            "tx_hash": tx_hash,
+            "explorer_url": (
+                "https://gensyn-testnet.explorer.alchemy.com/tx/" + tx_hash
+            ),
+            "rpc_status": "confirmed",
+            "block_number": 123,
+            "transaction_index": 2,
+        }
+    ]
+    assert app.state.chain_tx_verifier.calls == [tx_hash]
+
+
+def test_job_verify_endpoint_reports_rpc_chain_edge_states(tmp_path: Path) -> None:
+    _configure_test_store(tmp_path)
+    failed_tx = "0x" + "55" * 32
+    missing_tx = "0x" + "66" * 32
+    unavailable_tx = "0x" + "77" * 32
+    app.state.chain_tx_verifier = StubChainTxVerifier(
+        {
+            failed_tx: ChainTxVerification(
+                tx_hash=failed_tx,
+                status="failed",
+                rpc_status="reverted",
+            ),
+            missing_tx: ChainTxVerification(
+                tx_hash=missing_tx,
+                status="missing",
+                rpc_status="not_found",
+            ),
+            unavailable_tx: ChainTxVerification(
+                tx_hash=unavailable_tx,
+                status="present",
+                rpc_status="rpc_unavailable",
+                error="Gensyn Testnet RPC receipt lookup failed",
+            ),
+        }
+    )
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(
+            run_metadata={
+                "chain_receipts": [
+                    {
+                        "kind": "contribution",
+                        "role": "risk",
+                        "status": "confirmed",
+                        "tx_hash": failed_tx,
+                    },
+                    {
+                        "kind": "contribution",
+                        "role": "narrative",
+                        "status": "confirmed",
+                        "tx_hash": missing_tx,
+                    },
+                    {
+                        "kind": "contribution",
+                        "role": "regime",
+                        "status": "confirmed",
+                        "tx_hash": unavailable_tx,
+                    },
+                ],
+            }
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    chain = payload["checks"]["chain"]
+    assert chain["status"] == "failed"
+    statuses = {item["tx_hash"]: item for item in chain["items"]}
+    assert statuses[failed_tx]["status"] == "failed"
+    assert statuses[failed_tx]["rpc_status"] == "reverted"
+    assert statuses[missing_tx]["status"] == "missing"
+    assert statuses[missing_tx]["rpc_status"] == "not_found"
+    assert statuses[unavailable_tx]["status"] == "present"
+    assert statuses[unavailable_tx]["rpc_status"] == "rpc_unavailable"
+    assert statuses[unavailable_tx]["error"] == (
+        "Gensyn Testnet RPC receipt lookup failed"
+    )
+
+
+def test_job_verify_endpoint_recomputes_persisted_ree_receipt_body(
+    tmp_path: Path,
+) -> None:
+    _configure_test_store(tmp_path)
+    receipt_body = json.loads((REE_FIXTURES / "valid_receipt.json").read_text())
+    receipt_hash = str(receipt_body["receipt_hash"])
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(
+            run_metadata={
+                "verification_attestations": [
+                    {
+                        "job_id": "job-placeholder",
+                        "node_role": "risk",
+                        "peer_id": "peer-risk-test",
+                        "status": "accepted",
+                        "score": 0.91,
+                        "output_hash": "0x" + "11" * 32,
+                        "ree_receipt_hash": receipt_hash,
+                        "receipt_status": "validated",
+                        "ree_receipt_body": receipt_body,
+                    }
+                ],
+            }
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    ree = payload["checks"]["ree"]
+    assert ree["status"] == "validated"
+    assert ree["items"][0]["status"] == "validated"
+    assert ree["items"][0]["receipt_hash"] == receipt_hash
+    assert ree["items"][0]["recomputed_receipt_hash"] == receipt_hash
+    assert ree["items"][0]["validation_source"] == "body"
+
+
+def test_job_verify_endpoint_fails_tampered_ree_receipt_body(
+    tmp_path: Path,
+) -> None:
+    _configure_test_store(tmp_path)
+    receipt_body = json.loads((REE_FIXTURES / "valid_receipt.json").read_text())
+    receipt_hash = str(receipt_body["receipt_hash"])
+    receipt_body["receipt_hash"] = "sha256:" + "ff" * 32
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(
+            run_metadata={
+                "verification_attestations": [
+                    {
+                        "job_id": "job-placeholder",
+                        "node_role": "risk",
+                        "peer_id": "peer-risk-test",
+                        "status": "accepted",
+                        "score": 0.91,
+                        "output_hash": "0x" + "11" * 32,
+                        "ree_receipt_hash": receipt_hash,
+                        "receipt_status": "validated",
+                        "ree_receipt_body": receipt_body,
+                    }
+                ],
+            }
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    ree = payload["checks"]["ree"]
+    assert payload["status"] == "failed"
+    assert ree["status"] == "failed"
+    assert ree["items"][0]["status"] == "failed"
+    assert ree["items"][0]["recomputed_receipt_hash"] == receipt_hash
+    assert ree["items"][0]["error"] == (
+        "REE receipt hash does not match recomputed hash"
+    )
+
+
+def test_job_verify_endpoint_recomputes_persisted_ree_receipt_path(
+    tmp_path: Path,
+) -> None:
+    _configure_test_store(tmp_path)
+    receipt_path = tmp_path / "receipt.json"
+    receipt_path.write_text((REE_FIXTURES / "valid_receipt.json").read_text())
+    receipt_body = json.loads(receipt_path.read_text())
+    receipt_hash = str(receipt_body["receipt_hash"])
+
+    async def _exercise() -> dict[str, object]:
+        job_id = await _create_completed_job_with_metadata(
+            run_metadata={
+                "verification_attestations": [
+                    {
+                        "job_id": "job-placeholder",
+                        "node_role": "risk",
+                        "peer_id": "peer-risk-test",
+                        "status": "accepted",
+                        "score": 0.91,
+                        "output_hash": "0x" + "11" * 32,
+                        "ree_receipt_hash": receipt_hash,
+                        "receipt_status": "validated",
+                        "ree_receipt_path": str(receipt_path),
+                    }
+                ],
+            }
+        )
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return (await client.get(f"/jobs/{job_id}/verify")).json()
+
+    payload = asyncio.run(_exercise())
+
+    ree = payload["checks"]["ree"]
+    assert ree["status"] == "validated"
+    assert ree["items"][0]["validation_source"] == "path"
+    assert ree["items"][0]["recomputed_receipt_hash"] == receipt_hash
+
+
 def test_reputation_endpoint_returns_local_projection(tmp_path: Path) -> None:
     _configure_test_store(tmp_path)
 
@@ -386,3 +830,49 @@ def test_reputation_endpoint_returns_local_projection(tmp_path: Path) -> None:
             }
         ]
     }
+
+
+async def _create_completed_job_with_metadata(
+    run_metadata: dict[str, object],
+) -> str:
+    request = ThesisRequest(
+        thesis="ETH can rally on improving ETF flows.",
+        asset="ETH",
+        horizon_days=30,
+    )
+    job = await app.state.job_store.create_job(request)
+    memo = await MemoSynthesisService(llm_client=FailingLLMClient()).synthesize(
+        job_id=job.job_id,
+        request=request,
+        dispatch_result=CoordinatorDispatchResult(
+            responses=[],
+            topology_snapshot={},
+            market_snapshot={},
+            news_headlines=[],
+        ),
+    )
+    metadata = {
+        key: [
+            {**item, "job_id": job.job_id}
+            if isinstance(item, dict) and item.get("job_id") == "job-placeholder"
+            else item
+            for item in value
+        ]
+        if isinstance(value, list)
+        else value
+        for key, value in run_metadata.items()
+    }
+    await app.state.job_store.complete_job(
+        job_id=job.job_id,
+        memo=memo,
+        provenance_ledger=[
+            {
+                "node_role": "risk",
+                "peer_id": "peer-risk-test",
+                "status": "completed",
+                "latency_ms": 12.5,
+            }
+        ],
+        run_metadata=metadata,
+    )
+    return job.job_id

@@ -96,6 +96,21 @@ def test_verifier_signs_attestation_when_key_is_configured() -> None:
     )
 
 
+def test_verifier_applies_ree_policy() -> None:
+    response_without_ree = _response().model_copy(
+        update={"ree_receipt_hash": None, "receipt_status": None}
+    )
+
+    attestation = VerifierService(
+        ree_policy="risk-only-ree",
+        enforce_ree_policy=True,
+    ).verify_response(task=_task(), response=response_without_ree)
+
+    assert attestation.status == "rejected"
+    assert attestation.score < 0.5
+    assert "required_ree_missing:risk-only-ree" in attestation.reasons
+
+
 def _task() -> TaskSpec:
     return TaskSpec(
         job_id="job-verifier-1",

@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from time import perf_counter
 from typing import Any, Protocol
 
-from app.axl.registry import AXLRegistry
+from app.axl.registry import AXLCapabilityRegistry, AXLRegistry
 from app.evaluation.reputation import build_reputation_updates
 from app.integrations.market_data import MarketDataProvider
 from app.integrations.news_feed import NewsFeedProvider
@@ -49,6 +49,7 @@ class CoordinatorDispatchResult:
     topology_snapshot: dict[str, Any]
     market_snapshot: dict[str, Any]
     news_headlines: list[str]
+    input_sources: list[dict[str, Any]] = field(default_factory=list)
     rejected_responses: list[SpecialistResponse] = field(default_factory=list)
     verification_attestations: list[VerificationAttestation] = field(
         default_factory=list
@@ -78,6 +79,7 @@ class CoordinatorService:
     ) -> None:
         self._axl_client = axl_client
         self._registry = registry
+        self._capability_registry = AXLCapabilityRegistry(registry)
         self._market_data_provider = market_data_provider
         self._news_feed_provider = news_feed_provider
         self._llm_client = llm_client
@@ -95,6 +97,11 @@ class CoordinatorService:
         run_mode = str(topology_snapshot.get("mode", "live-axl"))
         market_snapshot = await self._market_data_provider.fetch_snapshot(request)
         news_headlines = await self._news_feed_provider.fetch_headlines(request)
+        input_sources = await self._build_input_sources(
+            request=request,
+            market_snapshot=market_snapshot,
+            news_headlines=news_headlines,
+        )
 
         roles = self._execution_plan.specialist_roles
         results = await asyncio.gather(
@@ -106,6 +113,7 @@ class CoordinatorService:
                     market_snapshot=market_snapshot,
                     news_headlines=news_headlines,
                     run_mode=run_mode,
+                    topology_snapshot=topology_snapshot,
                 )
                 for role in roles
             ]
@@ -139,12 +147,15 @@ class CoordinatorService:
             topology_snapshot=topology_snapshot,
             market_snapshot=market_snapshot,
             news_headlines=news_headlines,
+            input_sources=input_sources,
             run_metadata=self._build_run_metadata(
                 run_mode=run_mode,
                 records=node_execution_records,
                 missing_roles=missing_roles,
                 verification_attestations=verification_attestations,
+                specialist_responses=[*responses, *rejected_responses],
                 execution_plan=self._execution_plan,
+                input_sources=input_sources,
                 verifier_ran=(
                     self._verifier is not None
                     and self._execution_plan.verifier_node_id is not None
@@ -193,6 +204,42 @@ class CoordinatorService:
                 rejected.append(response)
         return accepted, rejected, attestations
 
+    async def _build_input_sources(
+        self,
+        *,
+        request: ThesisRequest,
+        market_snapshot: dict[str, Any],
+        news_headlines: list[str],
+    ) -> list[dict[str, Any]]:
+        sources: list[dict[str, Any]] = []
+        market_source = market_snapshot.get("source_metadata")
+        if isinstance(market_source, dict):
+            sources.append(
+                {
+                    "input_role": "regime",
+                    "input_name": "market_snapshot",
+                    **market_source,
+                }
+            )
+
+        source_metadata = getattr(
+            self._news_feed_provider, "fetch_source_metadata", None
+        )
+        if callable(source_metadata):
+            news_sources = await source_metadata(request, news_headlines)
+            for headline, source in zip(news_headlines, news_sources, strict=False):
+                if isinstance(source, dict):
+                    sources.append(
+                        {
+                            "input_role": "narrative",
+                            "input_name": "news_headline",
+                            "text": headline,
+                            **source,
+                        }
+                    )
+
+        return sources
+
     async def _dispatch_role(
         self,
         role: str,
@@ -201,9 +248,8 @@ class CoordinatorService:
         market_snapshot: dict[str, Any],
         news_headlines: list[str],
         run_mode: str,
+        topology_snapshot: dict[str, Any],
     ) -> RoleDispatchOutcome:
-        peer_service = self._registry.get_service_for_role(role)
-        dispatch_target = f"/mcp/{peer_service.peer_id}/{peer_service.service_name}"
         transport = (
             "offline-preview" if run_mode == "offline-demo-preview" else "axl-mcp"
         )
@@ -215,50 +261,81 @@ class CoordinatorService:
             news_headlines=news_headlines,
         )
         started_at = perf_counter()
-
-        try:
-            response = await self._axl_client.dispatch_specialist(
-                peer_id=peer_service.peer_id,
-                service_name=peer_service.service_name,
-                payload=payload,
+        candidate_count = len(
+            self._capability_registry.list_candidates(
+                role,
+                topology_snapshot=topology_snapshot,
             )
-        except TimeoutError:
+        )
+        failed_peer_ids: set[str] = set()
+        attempted_peer_ids: list[str] = []
+        last_selection = None
+        last_status = "error"
+
+        while len(failed_peer_ids) < candidate_count:
+            selection = self._capability_registry.select_for_role(
+                role,
+                topology_snapshot=topology_snapshot,
+                failed_peer_ids=failed_peer_ids,
+            )
+            last_selection = selection
+            peer_service = selection.service
+            dispatch_target = f"/mcp/{peer_service.peer_id}/{peer_service.service_name}"
+            attempted_peer_ids.append(peer_service.peer_id)
+
+            try:
+                response = await self._axl_client.dispatch_specialist(
+                    peer_id=peer_service.peer_id,
+                    service_name=peer_service.service_name,
+                    payload=payload,
+                )
+            except TimeoutError:
+                last_status = "timed_out"
+                failed_peer_ids.add(peer_service.peer_id)
+                continue
+            except Exception:
+                last_status = "error"
+                failed_peer_ids.add(peer_service.peer_id)
+                continue
+
             return RoleDispatchOutcome(
-                response=None,
+                response=response,
                 execution_record=NodeExecutionRecord(
                     node_role=role,
                     peer_id=peer_service.peer_id,
-                    status="timed_out",
+                    status="completed",
                     latency_ms=_elapsed_ms(started_at),
                     service_name=peer_service.service_name,
                     transport=transport,
                     dispatch_target=dispatch_target,
-                ),
-            )
-        except Exception:
-            return RoleDispatchOutcome(
-                response=None,
-                execution_record=NodeExecutionRecord(
-                    node_role=role,
-                    peer_id=peer_service.peer_id,
-                    status="error",
-                    latency_ms=_elapsed_ms(started_at),
-                    service_name=peer_service.service_name,
-                    transport=transport,
-                    dispatch_target=dispatch_target,
+                    selection_reason=_fallback_reason(
+                        selection.reason,
+                        attempted_peer_ids=attempted_peer_ids,
+                    ),
+                    attempted_peer_ids=_audit_attempts(attempted_peer_ids),
                 ),
             )
 
+        if last_selection is None:
+            raise ValueError(f"AXLRegistry: no peer candidates for role '{role}'")
+
+        peer_service = last_selection.service
         return RoleDispatchOutcome(
-            response=response,
+            response=None,
             execution_record=NodeExecutionRecord(
                 node_role=role,
                 peer_id=peer_service.peer_id,
-                status="completed",
+                status=last_status,
                 latency_ms=_elapsed_ms(started_at),
                 service_name=peer_service.service_name,
                 transport=transport,
-                dispatch_target=dispatch_target,
+                dispatch_target=f"/mcp/{peer_service.peer_id}/{peer_service.service_name}",
+                selection_reason=_fallback_reason(
+                    last_selection.reason,
+                    attempted_peer_ids=attempted_peer_ids,
+                    exhausted=True,
+                ),
+                attempted_peer_ids=_audit_attempts(attempted_peer_ids),
             ),
         )
 
@@ -291,7 +368,9 @@ class CoordinatorService:
         records: list[NodeExecutionRecord],
         missing_roles: list[str],
         verification_attestations: list[VerificationAttestation],
+        specialist_responses: list[SpecialistResponse],
         execution_plan: ExecutionPlan,
+        input_sources: list[dict[str, Any]],
         verifier_ran: bool,
         synthesis_ran: bool,
     ) -> dict[str, Any]:
@@ -320,6 +399,9 @@ class CoordinatorService:
             "verification_attestations": [
                 attestation.model_dump() for attestation in verification_attestations
             ],
+            "specialist_responses": [
+                response.model_dump(mode="json") for response in specialist_responses
+            ],
             "reputation_updates": [
                 update.to_dict()
                 for update in build_reputation_updates(verification_attestations)
@@ -330,12 +412,54 @@ class CoordinatorService:
             "dispatch_targets": [
                 record.dispatch_target for record in records if record.dispatch_target
             ],
+            "peer_selection": [
+                _peer_selection_metadata(record)
+                for record in records
+                if record.selection_reason
+            ],
         }
+        if input_sources:
+            metadata["input_sources"] = input_sources
         transport_metadata = getattr(self._axl_client, "run_metadata", None)
         if callable(transport_metadata):
             metadata.update(transport_metadata())
+        verifier_metadata = getattr(self._verifier, "run_metadata", None)
+        if callable(verifier_metadata):
+            metadata.update(verifier_metadata())
         return metadata
 
 
 def _elapsed_ms(started_at: float) -> float:
     return round((perf_counter() - started_at) * 1000, 3)
+
+
+def _fallback_reason(
+    reason: str,
+    *,
+    attempted_peer_ids: list[str],
+    exhausted: bool = False,
+) -> str:
+    failed_before_success = attempted_peer_ids[:-1]
+    suffixes: list[str] = []
+    if failed_before_success:
+        suffixes.append(f"fallback_from={','.join(failed_before_success)}")
+    if exhausted and len(attempted_peer_ids) > 1:
+        suffixes.append(f"attempts_exhausted={','.join(attempted_peer_ids)}")
+    if not suffixes:
+        return reason
+    return f"{reason}; {'; '.join(suffixes)}"
+
+
+def _audit_attempts(attempted_peer_ids: list[str]) -> list[str]:
+    return list(attempted_peer_ids) if len(attempted_peer_ids) > 1 else []
+
+
+def _peer_selection_metadata(record: NodeExecutionRecord) -> dict[str, object]:
+    metadata: dict[str, object] = {
+        "node_role": record.node_role,
+        "peer_id": record.peer_id,
+        "selection_reason": record.selection_reason,
+    }
+    if record.attempted_peer_ids:
+        metadata["attempted_peer_ids"] = list(record.attempted_peer_ids)
+    return metadata

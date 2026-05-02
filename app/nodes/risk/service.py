@@ -37,6 +37,11 @@ class RiskService:
 
         ree_receipt_hash: str | None = None
         receipt_status: str | None = None
+        ree_prompt_hash: str | None = None
+        ree_tokens_hash: str | None = None
+        ree_model_name: str | None = None
+        ree_receipt_body: dict[str, object] | None = None
+        ree_receipt_path: str | None = None
         if self._ree_runner is not None:
             outcome = self._ree_runner.run(
                 ReeRunRequest(
@@ -48,6 +53,11 @@ class RiskService:
             response_text = outcome.receipt.text_output
             ree_receipt_hash = outcome.receipt.receipt_hash
             receipt_status = outcome.receipt_status
+            ree_prompt_hash = outcome.receipt.prompt_hash
+            ree_tokens_hash = outcome.receipt.tokens_hash
+            ree_model_name = outcome.receipt.model_name
+            ree_receipt_body = outcome.receipt.model_dump()
+            ree_receipt_path = str(outcome.receipt_path)
         else:
             response_text = await self._llm_client.complete(
                 model=self._model, messages=prompt
@@ -80,6 +90,11 @@ class RiskService:
             agent_wallet=self._settings.node_wallet_address or None,
             ree_receipt_hash=ree_receipt_hash,
             receipt_status=receipt_status,
+            ree_prompt_hash=ree_prompt_hash,
+            ree_tokens_hash=ree_tokens_hash,
+            ree_model_name=ree_model_name,
+            ree_receipt_body=ree_receipt_body,
+            ree_receipt_path=ree_receipt_path,
         )
 
     def _render_ree_prompt(self, messages: list[dict[str, str]]) -> str:

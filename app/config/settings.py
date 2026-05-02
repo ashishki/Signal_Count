@@ -24,13 +24,16 @@ class Settings:
     axl_topology_path: str = getenv("AXL_TOPOLOGY_PATH", "/topology")
     regime_peer_id: str = getenv("REGIME_PEER_ID", "peer-regime-example")
     regime_service_name: str = getenv("REGIME_SERVICE_NAME", "regime_analyst")
+    regime_peer_candidates: str = getenv("REGIME_PEER_CANDIDATES", "")
     narrative_peer_id: str = getenv("NARRATIVE_PEER_ID", "peer-narrative-example")
     narrative_service_name: str = getenv(
         "NARRATIVE_SERVICE_NAME",
         "narrative_analyst",
     )
+    narrative_peer_candidates: str = getenv("NARRATIVE_PEER_CANDIDATES", "")
     risk_peer_id: str = getenv("RISK_PEER_ID", "peer-risk-example")
     risk_service_name: str = getenv("RISK_SERVICE_NAME", "risk_analyst")
+    risk_peer_candidates: str = getenv("RISK_PEER_CANDIDATES", "")
     axl_mcp_router_url: str = getenv("AXL_MCP_ROUTER_URL", "http://127.0.0.1:9003")
     axl_dispatch_timeout_seconds: float = float(
         getenv("AXL_DISPATCH_TIMEOUT_SECONDS", "30")
@@ -82,6 +85,10 @@ class Settings:
     gensyn_sdk_command: str = getenv("GENSYN_SDK_COMMAND", "ree.sh")
     ree_model: str = getenv("REE_MODEL", "Qwen/Qwen3-0.6B")
     ree_cpu_only: bool = (getenv("REE_CPU_ONLY", "")).lower() in {"1", "true", "yes"}
+    signal_count_ree_policy: str = getenv(
+        "SIGNAL_COUNT_REE_POLICY",
+        "risk-only-ree",
+    )
     verifier_private_key: str = getenv("VERIFIER_PRIVATE_KEY", "")
 
 

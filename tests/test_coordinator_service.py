@@ -55,6 +55,32 @@ class StubAXLClient:
         )
 
 
+class FallbackAXLClient(StubAXLClient):
+    def __init__(self) -> None:
+        super().__init__()
+        self.topology_snapshot = {
+            "local_peer_id": "peer-coordinator-example",
+            "peers": [
+                "peer-regime-example",
+                "peer-narrative-example",
+                "peer-risk-a",
+                "peer-risk-b",
+            ],
+        }
+        self.attempted_peer_ids: list[str] = []
+
+    async def dispatch_specialist(
+        self,
+        peer_id: str,
+        service_name: str,
+        payload: dict[str, object],
+    ) -> SpecialistResponse:
+        self.attempted_peer_ids.append(peer_id)
+        if peer_id == "peer-risk-a":
+            raise TimeoutError("first risk peer timed out")
+        return await super().dispatch_specialist(peer_id, service_name, payload)
+
+
 class StubMarketDataProvider:
     def __init__(self) -> None:
         self.requests: list[ThesisRequest] = []
@@ -137,6 +163,14 @@ def test_coordinator_dispatches_and_collects_all_specialist_responses() -> None:
     assert market_data_provider.requests == [request]
     assert news_feed_provider.requests == [request]
     assert axl_client.dispatch_roles == ["regime", "narrative", "risk"]
+    assert [
+        response["node_role"]
+        for response in result.run_metadata["specialist_responses"]
+    ] == [
+        "regime",
+        "narrative",
+        "risk",
+    ]
     assert elapsed < 0.12
 
 
@@ -207,6 +241,83 @@ def test_coordinator_filters_rejected_specialist_responses() -> None:
     assert [response.node_role for response in result.rejected_responses] == ["risk"]
     assert result.partial is True
     assert result.run_metadata["rejected_roles"] == ["risk"]
+
+
+def test_peer_selection_reason_is_recorded() -> None:
+    service = CoordinatorService(
+        axl_client=StubAXLClient(),
+        registry=AXLRegistry(Settings()),
+        market_data_provider=StubMarketDataProvider(),
+        news_feed_provider=StubNewsFeedProvider(),
+        llm_client=object(),
+    )
+    request = ThesisRequest(
+        thesis="ETH can extend higher on ETF demand.",
+        asset="ETH",
+        horizon_days=30,
+    )
+
+    result = asyncio.run(service.dispatch(job_id="job-peer-selection", request=request))
+
+    assert result.run_metadata["peer_selection"] == [
+        {
+            "node_role": "regime",
+            "peer_id": "peer-regime-example",
+            "selection_reason": "capability:topology-up",
+        },
+        {
+            "node_role": "narrative",
+            "peer_id": "peer-narrative-example",
+            "selection_reason": "capability:topology-up",
+        },
+        {
+            "node_role": "risk",
+            "peer_id": "peer-risk-example",
+            "selection_reason": "capability:topology-up",
+        },
+    ]
+
+
+def test_coordinator_falls_back_to_next_peer_candidate() -> None:
+    axl_client = FallbackAXLClient()
+    service = CoordinatorService(
+        axl_client=axl_client,
+        registry=AXLRegistry(
+            Settings(
+                risk_peer_candidates="peer-risk-a:risk_analyst,peer-risk-b:risk_analyst"
+            )
+        ),
+        market_data_provider=StubMarketDataProvider(),
+        news_feed_provider=StubNewsFeedProvider(),
+        llm_client=object(),
+    )
+    request = ThesisRequest(
+        thesis="ETH can extend higher on ETF demand.",
+        asset="ETH",
+        horizon_days=30,
+    )
+
+    result = asyncio.run(service.dispatch(job_id="job-peer-fallback", request=request))
+
+    risk_response = next(
+        response for response in result.responses if response.node_role == "risk"
+    )
+    risk_record = next(
+        record for record in result.node_execution_records if record.node_role == "risk"
+    )
+    assert risk_response.peer_id == "peer-risk-b"
+    assert risk_record.peer_id == "peer-risk-b"
+    assert risk_record.status == "completed"
+    assert risk_record.attempted_peer_ids == ["peer-risk-a", "peer-risk-b"]
+    assert risk_record.selection_reason == (
+        "capability:topology-up; fallback_from=peer-risk-a"
+    )
+    assert result.run_metadata["peer_selection"][-1] == {
+        "node_role": "risk",
+        "peer_id": "peer-risk-b",
+        "selection_reason": "capability:topology-up; fallback_from=peer-risk-a",
+        "attempted_peer_ids": ["peer-risk-a", "peer-risk-b"],
+    }
 
 
 def test_coordinator_dispatch_payloads_are_transport_safe() -> None:
@@ -319,6 +430,7 @@ def test_coordinator_records_axl_dispatch_evidence_per_role() -> None:
             "service_name": "regime_analyst",
             "transport": "axl-mcp",
             "dispatch_target": "/mcp/peer-regime-example/regime_analyst",
+            "selection_reason": "capability:topology-up",
         },
         {
             "node_role": "narrative",
@@ -328,6 +440,7 @@ def test_coordinator_records_axl_dispatch_evidence_per_role() -> None:
             "service_name": "narrative_analyst",
             "transport": "axl-mcp",
             "dispatch_target": "/mcp/peer-narrative-example/narrative_analyst",
+            "selection_reason": "capability:topology-up",
         },
         {
             "node_role": "risk",
@@ -337,5 +450,6 @@ def test_coordinator_records_axl_dispatch_evidence_per_role() -> None:
             "service_name": "risk_analyst",
             "transport": "axl-mcp",
             "dispatch_target": "/mcp/peer-risk-example/risk_analyst",
+            "selection_reason": "capability:topology-up",
         },
     ]

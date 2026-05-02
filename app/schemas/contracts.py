@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -37,6 +39,11 @@ class SpecialistResponse(BaseModel):
     agent_wallet: str | None = Field(default=None, pattern=r"^0x[a-fA-F0-9]{40}$")
     ree_receipt_hash: str | None = None
     receipt_status: str | None = None
+    ree_prompt_hash: str | None = None
+    ree_tokens_hash: str | None = None
+    ree_model_name: str | None = None
+    ree_receipt_body: dict[str, Any] | None = None
+    ree_receipt_path: str | None = None
 
 
 class TaskSpec(BaseModel):
@@ -79,6 +86,11 @@ class VerificationAttestation(BaseModel):
     output_hash: str | None = None
     ree_receipt_hash: str | None = None
     receipt_status: str | None = None
+    ree_prompt_hash: str | None = None
+    ree_tokens_hash: str | None = None
+    ree_model_name: str | None = None
+    ree_receipt_body: dict[str, Any] | None = None
+    ree_receipt_path: str | None = None
     verifier: str | None = None
     attestation_hash: str | None = None
     verifier_signature: str | None = None
@@ -90,6 +102,10 @@ class MemoEvidenceSource(BaseModel):
     source_role: str = Field(min_length=1)
     peer_id: str = Field(min_length=1)
     output_hash: str | None = None
+    source_url: str | None = None
+    retrieved_at: str | None = None
+    source_hash: str | None = None
+    source_quality: str | None = None
 
 
 class FinalMemo(BaseModel):

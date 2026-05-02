@@ -4,11 +4,18 @@ from __future__ import annotations
 
 from typing import Protocol
 
+from eth_account import Account
+from eth_account.messages import encode_defunct
 from fastapi import APIRouter, HTTPException, Request, status
 
 from app.chain.receipts import ChainReceipt, JobChainReceipts
+from app.chain.verification import ChainTxVerification
 from app.coordinator.service import CoordinatorDispatchResult
+from app.identity.canonical import canonical_json_bytes
+from app.identity.hashing import canonical_json_hash
 from app.observability.provenance import NodeExecutionRecord
+from app.ree.receipts import parse_ree_receipt
+from app.ree.validator import validate_ree_receipt
 from app.schemas.contracts import FinalMemo, ThesisRequest
 from app.store import JobStore
 
@@ -44,6 +51,10 @@ class ChainReceiptRecorder(Protocol):
     ) -> JobChainReceipts: ...
 
 
+class ChainTxVerifier(Protocol):
+    def verify_transaction(self, tx_hash: str) -> ChainTxVerification: ...
+
+
 def _get_job_store(request: Request) -> JobStore:
     return request.app.state.job_store  # type: ignore[no-any-return]
 
@@ -70,6 +81,10 @@ def _get_memo_synthesizer(request: Request) -> MemoSynthesizer:
 
 def _get_chain_receipt_recorder(request: Request) -> ChainReceiptRecorder | None:
     return getattr(request.app.state, "chain_receipt_service", None)
+
+
+def _get_chain_tx_verifier(request: Request) -> ChainTxVerifier | None:
+    return getattr(request.app.state, "chain_tx_verifier", None)
 
 
 async def create_completed_job_submission(
@@ -140,6 +155,20 @@ async def get_job(job_id: str, request: Request) -> dict[str, object]:
     return job.to_dict()
 
 
+@router.get("/jobs/{job_id}/verify")
+async def verify_job(job_id: str, request: Request) -> dict[str, object]:
+    store = _get_job_store(request)
+    job = await store.get_job(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Job not found."
+        )
+    return _build_job_verification_bundle(
+        job.to_dict(),
+        chain_tx_verifier=_get_chain_tx_verifier(request),
+    )
+
+
 @router.get("/reputation")
 async def get_reputation_leaderboard(request: Request) -> dict[str, object]:
     store = _get_job_store(request)
@@ -151,6 +180,305 @@ def _build_provenance_ledger(
     node_execution_records: list[NodeExecutionRecord],
 ) -> list[dict[str, object]]:
     return [record.to_dict() for record in node_execution_records]
+
+
+def _build_job_verification_bundle(
+    job: dict[str, object],
+    *,
+    chain_tx_verifier: ChainTxVerifier | None = None,
+) -> dict[str, object]:
+    run_metadata = _as_dict(job.get("run_metadata"))
+    attestations = _as_dict_list(run_metadata.get("verification_attestations"))
+    specialist_responses = _as_dict_list(run_metadata.get("specialist_responses"))
+    chain_receipts = _as_dict_list(run_metadata.get("chain_receipts"))
+
+    checks = {
+        "output_hashes": _verify_output_hashes(attestations, specialist_responses),
+        "attestations": _verify_attestations(attestations),
+        "ree": _verify_ree_evidence(attestations, chain_receipts),
+        "chain": _verify_chain_receipts(
+            chain_receipts,
+            chain_tx_verifier=chain_tx_verifier,
+        ),
+    }
+    return {
+        "job_id": str(job.get("job_id", "")),
+        "status": _rollup_status([check["status"] for check in checks.values()]),
+        "checks": checks,
+    }
+
+
+def _verify_output_hashes(
+    attestations: list[dict[str, object]],
+    specialist_responses: list[dict[str, object]],
+) -> dict[str, object]:
+    responses_by_role = {
+        str(response.get("node_role", "")): response
+        for response in specialist_responses
+    }
+    items = []
+    for attestation in attestations:
+        role = str(attestation.get("node_role", ""))
+        output_hash = str(attestation.get("output_hash", ""))
+        item = {
+            "role": role,
+            "status": "present" if output_hash else "missing",
+            "output_hash": output_hash,
+        }
+        response = responses_by_role.get(role)
+        if output_hash and response is not None:
+            recomputed = canonical_json_hash(response)
+            item["recomputed_output_hash"] = recomputed
+            item["status"] = "verified" if recomputed == output_hash else "failed"
+        items.append(item)
+    return {"status": _items_status(items), "items": items}
+
+
+def _verify_attestations(
+    attestations: list[dict[str, object]],
+) -> dict[str, object]:
+    items = []
+    for attestation in attestations:
+        signature_status = _verify_attestation_signature(attestation)
+        items.append(
+            {
+                "role": str(attestation.get("node_role", "")),
+                "status": signature_status,
+                "attestation_hash": str(attestation.get("attestation_hash", "")),
+                "verifier": str(attestation.get("verifier", "")),
+            }
+        )
+    return {"status": _items_status(items), "items": items}
+
+
+def _verify_attestation_signature(attestation: dict[str, object]) -> str:
+    attestation_hash = attestation.get("attestation_hash")
+    verifier = attestation.get("verifier")
+    signature = attestation.get("verifier_signature")
+    if not attestation_hash and not signature and not verifier:
+        return "present"
+    if not (
+        isinstance(attestation_hash, str)
+        and isinstance(verifier, str)
+        and isinstance(signature, str)
+    ):
+        return "missing"
+
+    try:
+        message = encode_defunct(
+            primitive=canonical_json_bytes(
+                {
+                    "domain": "signal-count.verifier-attestation",
+                    "attestation_hash": attestation_hash,
+                }
+            )
+        )
+        recovered = Account.recover_message(message, signature=signature)
+    except Exception:
+        return "failed"
+    return "verified" if recovered.lower() == verifier.lower() else "failed"
+
+
+def _verify_ree_evidence(
+    attestations: list[dict[str, object]],
+    chain_receipts: list[dict[str, object]],
+) -> dict[str, object]:
+    evidence_by_role: dict[str, dict[str, object]] = {}
+    for attestation in attestations:
+        role = str(attestation.get("node_role", ""))
+        if _has_ree_metadata(attestation):
+            evidence_by_role[role] = _choose_ree_item(
+                evidence_by_role.get(role),
+                {
+                    "role": role,
+                    **_verify_ree_receipt_metadata(attestation),
+                },
+            )
+    for receipt in chain_receipts:
+        role = str(receipt.get("role", ""))
+        if _has_ree_metadata(receipt):
+            evidence_by_role[role] = _choose_ree_item(
+                evidence_by_role.get(role),
+                {
+                    "role": role,
+                    **_verify_ree_receipt_metadata(receipt),
+                },
+            )
+
+    items = list(evidence_by_role.values())
+    return {"status": _items_status(items), "items": items}
+
+
+def _has_ree_metadata(item: dict[str, object]) -> bool:
+    return bool(
+        item.get("ree_receipt_hash")
+        or item.get("receipt_status")
+        or item.get("ree_status")
+        or item.get("ree_receipt_body")
+        or item.get("ree_receipt_path")
+    )
+
+
+def _verify_ree_receipt_metadata(item: dict[str, object]) -> dict[str, object]:
+    declared_hash = str(item.get("ree_receipt_hash", ""))
+    status_value = str(item.get("receipt_status") or item.get("ree_status") or "")
+    source = item.get("ree_receipt_body") or item.get("ree_receipt_path")
+    if source is None:
+        return {
+            "status": _ree_status(status_value),
+            "receipt_hash": declared_hash,
+        }
+
+    try:
+        receipt = parse_ree_receipt(source)  # type: ignore[arg-type]
+        validation = validate_ree_receipt(receipt)
+    except Exception:
+        return {
+            "status": "failed",
+            "receipt_hash": declared_hash,
+            "validation_source": _ree_validation_source(source),
+            "error": "REE receipt could not be parsed for repeat validation",
+        }
+
+    hash_matches_metadata = (
+        not declared_hash or receipt.receipt_hash.lower() == declared_hash.lower()
+    )
+    status = "validated" if validation.matches and hash_matches_metadata else "failed"
+    payload: dict[str, object] = {
+        "status": status,
+        "receipt_hash": declared_hash or receipt.receipt_hash,
+        "recomputed_receipt_hash": validation.expected_receipt_hash,
+        "validation_source": _ree_validation_source(source),
+    }
+    if not validation.matches:
+        payload["error"] = "REE receipt hash does not match recomputed hash"
+    elif not hash_matches_metadata:
+        payload["error"] = "REE receipt hash does not match stored metadata"
+    return payload
+
+
+def _ree_validation_source(source: object) -> str:
+    return "body" if isinstance(source, dict) else "path"
+
+
+def _choose_ree_item(
+    current: dict[str, object] | None,
+    candidate: dict[str, object],
+) -> dict[str, object]:
+    if current is None:
+        return candidate
+    return (
+        candidate
+        if _status_rank(str(candidate.get("status", "")))
+        > _status_rank(str(current.get("status", "")))
+        else current
+    )
+
+
+def _status_rank(status_value: str) -> int:
+    status = status_value.strip().lower()
+    if status == "failed":
+        return 5
+    if status == "verified":
+        return 4
+    if status == "validated":
+        return 3
+    if status == "present":
+        return 2
+    if status == "missing":
+        return 1
+    return 0
+
+
+def _verify_chain_receipts(
+    chain_receipts: list[dict[str, object]],
+    *,
+    chain_tx_verifier: ChainTxVerifier | None = None,
+) -> dict[str, object]:
+    items = []
+    for receipt in chain_receipts:
+        if not (receipt.get("tx_hash") or receipt.get("status")):
+            continue
+        tx_hash = str(receipt.get("tx_hash", ""))
+        item = {
+            "kind": str(receipt.get("kind", "")),
+            "role": str(receipt.get("role", "")),
+            "status": _chain_status(str(receipt.get("status", ""))),
+            "tx_hash": tx_hash,
+            "explorer_url": str(receipt.get("explorer_url", "")),
+        }
+        if receipt.get("rpc_status"):
+            item["rpc_status"] = str(receipt.get("rpc_status", ""))
+            if item["rpc_status"] == "confirmed":
+                item["status"] = "verified"
+        if chain_tx_verifier is not None and tx_hash:
+            verification = chain_tx_verifier.verify_transaction(tx_hash)
+            item.update(_chain_tx_verification_fields(verification))
+        items.append(item)
+    return {"status": _items_status(items), "items": items}
+
+
+def _chain_tx_verification_fields(
+    verification: ChainTxVerification,
+) -> dict[str, object]:
+    payload = verification.to_dict()
+    payload.pop("tx_hash", None)
+    return payload
+
+
+def _ree_status(status_value: str) -> str:
+    normalized = status_value.strip().lower().replace("_", "-")
+    if normalized == "verified":
+        return "verified"
+    if normalized == "validated":
+        return "validated"
+    if normalized == "parsed":
+        return "present"
+    if normalized in {"failed", "error", "rejected"}:
+        return "failed"
+    return "present" if normalized else "missing"
+
+
+def _chain_status(status_value: str) -> str:
+    normalized = status_value.strip().lower().replace("_", "-")
+    if normalized in {"confirmed", "recorded"}:
+        return "present"
+    if normalized in {"failed", "error", "rejected"}:
+        return "failed"
+    if normalized in {"pending", "submitted"}:
+        return "present"
+    return "missing"
+
+
+def _items_status(items: list[dict[str, object]]) -> str:
+    if not items:
+        return "missing"
+    return _rollup_status([str(item.get("status", "")) for item in items])
+
+
+def _rollup_status(statuses: list[str]) -> str:
+    normalized = [status.strip().lower() for status in statuses if status]
+    if not normalized:
+        return "missing"
+    if "failed" in normalized:
+        return "failed"
+    if "missing" in normalized:
+        return "missing"
+    if normalized and all(status == "verified" for status in normalized):
+        return "verified"
+    if "validated" in normalized:
+        return "validated"
+    return "present"
+
+
+def _as_dict(value: object) -> dict[str, object]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_dict_list(value: object) -> list[dict[str, object]]:
+    if not isinstance(value, list):
+        return []
+    return [item for item in value if isinstance(item, dict)]
 
 
 async def _build_chain_receipt_metadata(

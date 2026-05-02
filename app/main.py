@@ -9,6 +9,7 @@ from app.axl.client import AXLClient
 from app.axl.registry import AXLRegistry
 from app.chain.broadcaster import GensynReceiptRecorder
 from app.chain.config import ChainConfig
+from app.chain.verification import GensynChainTxVerifier
 from app.config.settings import get_settings
 from app.coordinator.service import CoordinatorService
 from app.coordinator.synthesis import MemoSynthesisService
@@ -40,8 +41,16 @@ def create_app() -> FastAPI:
         market_data_provider=MarketDataProvider(),
         news_feed_provider=NewsFeedProvider(),
         llm_client=llm_client,
-        verifier=VerifierService(verifier_private_key=settings.verifier_private_key),
+        verifier=VerifierService(
+            verifier_private_key=settings.verifier_private_key,
+            ree_policy=settings.signal_count_ree_policy,
+            enforce_ree_policy=settings.signal_count_ree_enabled,
+        ),
     )
+    if settings.signal_count_chain_receipts and not settings.signal_count_offline_demo:
+        app.state.chain_tx_verifier = GensynChainTxVerifier(
+            config=ChainConfig.from_settings(settings)
+        )
     if (
         settings.signal_count_chain_receipts
         and not settings.signal_count_offline_demo
