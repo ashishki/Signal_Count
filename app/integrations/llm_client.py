@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from dataclasses import dataclass
 from os import getenv
@@ -41,11 +40,7 @@ class LLMClient:
                 payload = {"model": model, "messages": messages}
 
                 try:
-                    response_body = await asyncio.to_thread(
-                        self._post_json,
-                        api_key,
-                        payload,
-                    )
+                    response_body = self._post_json(api_key, payload)
                 except (HTTPError, URLError, TimeoutError, ValueError) as exc:
                     raise LLMClientError("LLM provider request failed") from exc
 
