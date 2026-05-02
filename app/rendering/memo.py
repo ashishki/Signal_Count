@@ -42,6 +42,9 @@ def render_memo_markdown(memo: FinalMemo) -> str:
             "## Opposing Evidence",
             *_render_markdown_list(memo.opposing_evidence),
             "",
+            "## Source Quality",
+            *_render_markdown_list(_source_quality_items(memo)),
+            "",
             "## Catalysts",
             *_render_markdown_list(memo.catalysts),
             "",
@@ -102,6 +105,7 @@ def render_memo_html(memo: FinalMemo) -> str:
                 memo.opposing_evidence,
                 memo,
             ),
+            _render_html_section("Source Quality", _source_quality_items(memo)),
             _render_html_section("Catalysts", memo.catalysts),
             _render_html_section("Risks", memo.risks),
             _render_html_section(
@@ -166,6 +170,8 @@ def _render_evidence_item(item: str, memo: FinalMemo | None) -> str:
             source.source_role,
             source.peer_id,
             _short_hash(source.output_hash),
+            source.source_quality,
+            _short_hash(source.source_hash),
         )
         if value
     )
@@ -177,6 +183,23 @@ def _render_evidence_item(item: str, memo: FinalMemo | None) -> str:
         f' <span class="evidence-source">source: {escape(source_detail)}</span>'
         "</li>"
     )
+
+
+def _source_quality_items(memo: FinalMemo) -> list[str]:
+    items: list[str] = []
+    seen: set[str] = set()
+    for source in memo.evidence_sources:
+        quality = source.source_quality or "missing source"
+        role = source.source_role
+        source_url = source.source_url or "no source URL"
+        key = f"{role}:{quality}:{source_url}"
+        if key in seen:
+            continue
+        seen.add(key)
+        retrieved_at = source.retrieved_at or "no retrieval timestamp"
+        source_hash = _short_hash(source.source_hash) or "no source hash"
+        items.append(f"{role}: {quality} ({source_url}, {retrieved_at}, {source_hash})")
+    return items or ["missing source"]
 
 
 def _find_source(item: str, memo: FinalMemo | None):

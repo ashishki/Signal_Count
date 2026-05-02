@@ -15,6 +15,7 @@ def test_markdown_renderer_uses_fixed_section_headings() -> None:
         "## Scenarios",
         "## Supporting Evidence",
         "## Opposing Evidence",
+        "## Source Quality",
         "## Catalysts",
         "## Risks",
         "## Invalidation Triggers",

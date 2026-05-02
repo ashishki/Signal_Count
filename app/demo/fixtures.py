@@ -31,6 +31,16 @@ _FIXTURES = (
         asset="ETH",
         horizon_days=30,
     ),
+    DemoFixture(
+        fixture_id="eth-liquidity-vs-support-break",
+        title="ETH Liquidity vs Support Break",
+        thesis=(
+            "ETH upside depends on liquidity staying constructive, but the thesis "
+            "fails if support breaks while headline momentum remains mixed."
+        ),
+        asset="ETH",
+        horizon_days=21,
+    ),
 )
 
 

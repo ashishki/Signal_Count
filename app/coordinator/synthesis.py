@@ -58,6 +58,7 @@ class MemoSynthesisService:
                 request=request,
                 responses=dispatch_result.responses,
                 normalized_thesis=normalized_thesis,
+                dispatch_result=dispatch_result,
             )
             memo = self._parse_llm_memo(
                 llm_text=llm_text,
@@ -97,6 +98,7 @@ class MemoSynthesisService:
         request: ThesisRequest,
         responses: list[SpecialistResponse],
         normalized_thesis: str,
+        dispatch_result: CoordinatorDispatchResult,
     ) -> str:
         tracer = get_tracer()
         with tracer.span("memo_synthesis.llm"):
@@ -107,6 +109,7 @@ class MemoSynthesisService:
                     request=request,
                     responses=responses,
                     normalized_thesis=normalized_thesis,
+                    dispatch_result=dispatch_result,
                 ),
             )
 
@@ -116,6 +119,7 @@ class MemoSynthesisService:
         request: ThesisRequest,
         responses: list[SpecialistResponse],
         normalized_thesis: str,
+        dispatch_result: CoordinatorDispatchResult,
     ) -> list[dict[str, str]]:
         response_payload = [
             {
@@ -129,6 +133,7 @@ class MemoSynthesisService:
             }
             for response in responses
         ]
+        input_sources = _input_sources(dispatch_result)
         return [
             {
                 "role": "system",
@@ -145,7 +150,10 @@ class MemoSynthesisService:
                     # is not copied into logs, span attributes, or metrics.
                     "Synthesize one final memo from these specialist outputs. "
                     "Use concise bullets for catalysts, risks, and invalidation "
-                    "triggers. Return keys: job_id, normalized_thesis, scenarios, "
+                    "triggers. Explicitly preserve counter-thesis or disagreement. "
+                    "Label evidence quality as live source, fixture source, stale "
+                    "source, or missing source. Return keys: job_id, "
+                    "normalized_thesis, scenarios, "
                     "supporting_evidence, opposing_evidence, catalysts, risks, "
                     "invalidation_triggers, confidence_rationale, provenance, "
                     "partial, partial_reason. The scenarios object must contain "
@@ -155,7 +163,9 @@ class MemoSynthesisService:
                     f"horizon_days: {request.horizon_days}\n"
                     f"normalized_thesis: {normalized_thesis}\n"
                     "specialist_outputs:\n"
-                    f"{json.dumps(response_payload, separators=(',', ':'))}"
+                    f"{json.dumps(response_payload, separators=(',', ':'))}\n"
+                    "input_sources:\n"
+                    f"{json.dumps(input_sources, separators=(',', ':'))}"
                 ),
             },
         ]
@@ -180,7 +190,10 @@ class MemoSynthesisService:
         ]
         payload["evidence_sources"] = [
             source.model_dump()
-            for source in self._evidence_sources(dispatch_result.responses)
+            for source in self._evidence_sources(
+                dispatch_result.responses,
+                dispatch_result=dispatch_result,
+            )
         ]
         payload["opposing_evidence"] = self._compact_unique(
             [
@@ -236,7 +249,10 @@ class MemoSynthesisService:
             ],
             confidence_rationale=self._confidence_rationale(responses, partial),
             provenance=provenance,
-            evidence_sources=self._evidence_sources(responses),
+            evidence_sources=self._evidence_sources(
+                responses,
+                dispatch_result=dispatch_result,
+            ),
             verification_attestations=dispatch_result.verification_attestations,
             partial=partial,
             partial_reason=partial_reason,
@@ -304,10 +320,13 @@ class MemoSynthesisService:
     def _evidence_sources(
         self,
         responses: list[SpecialistResponse],
+        dispatch_result: CoordinatorDispatchResult,
     ) -> list[MemoEvidenceSource]:
         sources: list[MemoEvidenceSource] = []
+        input_source_by_role = _input_source_by_role(dispatch_result)
         for response in responses:
             output_hash = canonical_json_hash(response)
+            input_source = input_source_by_role.get(response.node_role, {})
             for item in [response.summary, *response.signals, *response.risks]:
                 if item.strip():
                     sources.append(
@@ -316,6 +335,14 @@ class MemoSynthesisService:
                             source_role=response.node_role,
                             peer_id=response.peer_id,
                             output_hash=output_hash,
+                            source_url=_optional_str(input_source.get("source_url")),
+                            retrieved_at=_optional_str(
+                                input_source.get("retrieved_at")
+                            ),
+                            source_hash=_optional_str(input_source.get("source_hash")),
+                            source_quality=_optional_str(
+                                input_source.get("source_quality")
+                            ),
                         )
                     )
         return sources
@@ -375,3 +402,27 @@ class MemoSynthesisService:
 
 def _elapsed_ms(started_at: float) -> float:
     return round((perf_counter() - started_at) * 1000, 3)
+
+
+def _input_sources(dispatch_result: CoordinatorDispatchResult) -> list[dict[str, Any]]:
+    if dispatch_result.input_sources:
+        return dispatch_result.input_sources
+    raw_sources = dispatch_result.run_metadata.get("input_sources")
+    if isinstance(raw_sources, list):
+        return [source for source in raw_sources if isinstance(source, dict)]
+    return []
+
+
+def _input_source_by_role(
+    dispatch_result: CoordinatorDispatchResult,
+) -> dict[str, dict[str, Any]]:
+    by_role: dict[str, dict[str, Any]] = {}
+    for source in _input_sources(dispatch_result):
+        role = source.get("input_role")
+        if isinstance(role, str) and role not in by_role:
+            by_role[role] = source
+    return by_role
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) and value else None

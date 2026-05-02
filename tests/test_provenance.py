@@ -1,4 +1,5 @@
 import asyncio
+import re
 from pathlib import Path
 
 import httpx
@@ -6,6 +7,8 @@ from httpx import ASGITransport
 
 from app.coordinator.service import CoordinatorDispatchResult
 from app.coordinator.synthesis import MemoSynthesisService
+from app.integrations.market_data import MarketDataProvider
+from app.integrations.news_feed import NewsFeedProvider
 from app.main import app
 from app.observability.provenance import NodeExecutionRecord
 from app.schemas.contracts import ScenarioView, SpecialistResponse, ThesisRequest
@@ -95,6 +98,36 @@ class StubCoordinator:
 class FailingLLMClient:
     async def complete(self, model: str, messages: list[dict[str, str]]) -> str:
         raise RuntimeError("force fallback path")
+
+
+def test_input_sources_are_hashed_and_timestamped() -> None:
+    request = ThesisRequest(
+        thesis="ETH upside depends on liquidity but fails on support break.",
+        asset="ETH",
+        horizon_days=21,
+    )
+
+    market_snapshot = asyncio.run(MarketDataProvider().fetch_snapshot(request))
+    headlines = asyncio.run(NewsFeedProvider().fetch_headlines(request))
+    headline_sources = asyncio.run(
+        NewsFeedProvider().fetch_source_metadata(request, headlines)
+    )
+
+    market_source = market_snapshot["source_metadata"]
+    assert market_source["source_quality"] == "fixture source"
+    assert market_source["source_url"].startswith("fixture://signal-count/")
+    assert re.fullmatch(r"0x[a-f0-9]{64}", market_source["source_hash"])
+    assert market_source["retrieved_at"].endswith("Z")
+
+    assert len(headline_sources) == len(headlines)
+    assert all(
+        source["source_quality"] == "fixture source" for source in headline_sources
+    )
+    assert all(
+        re.fullmatch(r"0x[a-f0-9]{64}", source["source_hash"])
+        for source in headline_sources
+    )
+    assert all(source["retrieved_at"].endswith("Z") for source in headline_sources)
 
 
 def test_job_record_contains_per_node_status_and_latency(tmp_path: Path) -> None:

@@ -6,6 +6,7 @@ from app.coordinator.service import CoordinatorDispatchResult
 from app.coordinator import synthesis as synthesis_module
 from app.coordinator.synthesis import MemoSynthesisService
 from app.observability.metrics import NoopMetrics
+from app.rendering.memo import render_memo_markdown
 from app.schemas.contracts import (
     FinalMemo,
     ScenarioView,
@@ -206,6 +207,57 @@ def test_rejected_specialist_output_is_visible() -> None:
         item.startswith("Rejected risk output from peer-risk-test")
         for item in memo.opposing_evidence
     )
+
+
+def test_memo_surfaces_source_quality_and_disagreement() -> None:
+    dispatch_result = replace(
+        _dispatch_result(job_id="job-source-quality"),
+        input_sources=[
+            {
+                "input_role": "regime",
+                "input_name": "market_snapshot",
+                "source_quality": "fixture source",
+                "source_url": "fixture://signal-count/market-snapshot/v1/ETH",
+                "retrieved_at": "2026-05-01T00:00:00Z",
+                "source_hash": "0x" + ("a" * 64),
+            },
+            {
+                "input_role": "narrative",
+                "input_name": "news_headline",
+                "source_quality": "fixture source",
+                "source_url": "fixture://signal-count/news-headline/v1/ETH/1",
+                "retrieved_at": "2026-05-01T00:00:01Z",
+                "source_hash": "0x" + ("b" * 64),
+            },
+        ],
+    )
+
+    class FailingLLMClient:
+        async def complete(self, model: str, messages: list[dict[str, str]]) -> str:
+            raise RuntimeError("force fallback path")
+
+    memo = asyncio.run(
+        MemoSynthesisService(llm_client=FailingLLMClient()).synthesize(
+            job_id="job-source-quality",
+            request=ThesisRequest(
+                thesis=("ETH upside depends on liquidity but fails if support breaks."),
+                asset="ETH",
+                horizon_days=21,
+            ),
+            dispatch_result=dispatch_result,
+        )
+    )
+    rendered = render_memo_markdown(memo)
+
+    assert any(
+        source.source_quality == "fixture source" for source in memo.evidence_sources
+    )
+    assert any(
+        source.source_hash == "0x" + ("a" * 64) for source in memo.evidence_sources
+    )
+    assert any("support invalidates" in item for item in memo.opposing_evidence)
+    assert "## Source Quality" in rendered
+    assert "fixture source" in rendered
 
 
 def _dispatch_result(job_id: str) -> CoordinatorDispatchResult:
