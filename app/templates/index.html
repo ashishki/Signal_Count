@@ -1015,22 +1015,26 @@
 
       $capability_strip
 
+      <div class="section-label">Latest Verified Run</div>
+      $latest_job_panel
+
       <section class="hero">
         <div class="hero-copy">
-          <p class="eyebrow">Operator View</p>
-          <h1>Signal Count Proof Console for <em>AI swarm</em> risk analysis</h1>
+          <p class="eyebrow">Proof Console</p>
+          <h1>Do not trust the memo. <em>Verify every agent behind it.</em></h1>
           <p>
-            Submit a thesis, inspect the latest memo, and verify which specialist
-            nodes participated in the run. The console keeps AXL peer evidence,
-            wallet attestations, REE receipts, chain txs, indexer state, and memo
-            provenance visible in one place.
+            Signal Count turns an AI-generated risk memo into auditable work:
+            AXL peer selection, wallet attestations, output hashes, REE receipt
+            metadata, chain txs, indexer state, source quality, and memo
+            provenance stay visible in one proof surface.
           </p>
-          <div class="axl-tag">Powered by Gensyn AXL mesh and REE receipts</div>
+          <p>Do not trust the memo. Verify every agent behind it.</p>
+          <div class="axl-tag">AXL-routed work with REE-backed verification paths</div>
         </div>
 
         <div class="hero-right">
           <div class="mesh-viz-wrap">
-            <div class="mesh-label"><span class="mesh-dot"></span> Live Mesh &middot; 3 Agents &middot; AXL P2P</div>
+            <div class="mesh-label"><span class="mesh-dot"></span> AXL Routing &middot; Specialist Peers &middot; Verifiable Outputs</div>
             <canvas id="meshCanvas" class="mesh-canvas"></canvas>
             <div class="mesh-stats">
               <div class="mesh-stat"><span class="ms-val" id="mv-msgs">0</span><span class="ms-key">msgs/s</span></div>
@@ -1041,7 +1045,7 @@
           </div>
 
           <section class="form-panel">
-            <div class="form-panel-header">New Analysis Run</div>
+            <div class="form-panel-header">Run Another Thesis</div>
             <form action="/demo/submit" method="post">
               <div class="field">
                 <label for="thesis">Market Thesis</label>
@@ -1057,7 +1061,7 @@
                   <input id="horizon_days" name="horizon_days" type="number" value="30" min="1" max="365" required />
                 </div>
               </div>
-              <button type="submit" class="submit-btn">Dispatch Agent Swarm</button>
+              <button type="submit" class="submit-btn">Create Verifiable Run</button>
             </form>
           </section>
         </div>
@@ -1066,14 +1070,11 @@
       <div class="glow-divider"></div>
 
       <section class="fixtures">
-        <div class="section-label">Demo Fixtures</div>
+        <div class="section-label">Replayable Fixtures</div>
         <div class="fixture-grid">
           $fixture_cards
         </div>
       </section>
-
-      <div class="section-label">Latest Run</div>
-      $latest_job_panel
 
       <footer class="footer">
         <span>Signal Count &middot; Full-stack verifier demo &middot; Gensyn AXL + REE</span>

@@ -11,7 +11,10 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import HTMLResponse, RedirectResponse
 from pydantic import ValidationError
 
-from app.api.jobs import create_completed_job_submission
+from app.api.jobs import (
+    _build_job_verification_bundle,
+    create_completed_job_submission,
+)
 from app.demo.fixtures import DemoFixture, get_demo_fixture, list_demo_fixtures
 from app.indexer.projections import ChainEventsProjection
 from app.rendering.memo import render_memo_html
@@ -210,11 +213,11 @@ def _render_latest_job_panel(
             "</div>",
             "</div>",
             '<div class="tab-bar">',
-            '<button class="tab-btn active" type="button" onclick="switchTab(\'timeline\', this)">Run Timeline</button>',
+            '<button class="tab-btn active" type="button" onclick="switchTab(\'ledger\', this)">Verify Run</button>',
             '<button class="tab-btn" type="button" onclick="switchTab(\'memo\', this)">Risk Memo</button>',
-            '<button class="tab-btn" type="button" onclick="switchTab(\'ledger\', this)">Proof Ledger</button>',
+            '<button class="tab-btn" type="button" onclick="switchTab(\'timeline\', this)">Run Timeline</button>',
             "</div>",
-            '<div class="tab-pane active" id="tab-timeline">',
+            '<div class="tab-pane" id="tab-timeline">',
             '<div class="job-request">',
             "<h3>Submitted Thesis</h3>",
             f"<p>{thesis}</p>",
@@ -231,13 +234,15 @@ def _render_latest_job_panel(
             memo_html,
             "</div>",
             "</div>",
-            '<div class="tab-pane" id="tab-ledger">',
+            '<div class="tab-pane active" id="tab-ledger">',
             '<section class="proof-console-layout">',
             '<div class="proof-column primary-proof">',
             _render_trace_ledger(
                 latest_job.provenance_ledger,
                 latest_job.run_metadata,
             ),
+            _render_verification_panel(latest_job),
+            _render_risk_ree_hero(latest_job.run_metadata),
             _render_proof_details(latest_job.run_metadata),
             "</div>",
             '<div class="proof-column support-proof">',
@@ -255,6 +260,7 @@ def _render_latest_job_panel(
             (
                 "<thead><tr><th>Role</th><th>Peer</th><th>Service</th>"
                 "<th>Transport</th><th>Status</th><th>Latency (ms)</th>"
+                "<th>Selection</th><th>Attempts</th>"
                 "<th>Dispatch target</th></tr></thead>"
             ),
             f"<tbody>{_render_node_rows(latest_job.provenance_ledger)}</tbody>",
@@ -365,6 +371,134 @@ def _render_trace_rows(
     return "".join(rows)
 
 
+def _render_verification_panel(latest_job: JobRecord) -> str:
+    bundle = _build_job_verification_bundle(latest_job.to_dict())
+    checks = bundle.get("checks", {})
+    rows: list[str] = []
+    if isinstance(checks, dict):
+        for label in ("output_hashes", "attestations", "ree", "chain"):
+            check = checks.get(label)
+            if not isinstance(check, dict):
+                continue
+            check_status = str(check.get("status", "missing"))
+            rows.append(
+                "<tr>"
+                f"<td>{escape(label)}</td>"
+                f'<td><span class="status status-{escape(_status_class(check_status))}">{escape(check_status)}</span></td>'
+                f"<td>{escape(str(len(check.get('items', [])) if isinstance(check.get('items'), list) else 0))}</td>"
+                f"<td>{escape(_verification_evidence_label(label, check))}</td>"
+                "</tr>"
+            )
+    if not rows:
+        rows.append('<tr><td colspan="4">No verification checks available.</td></tr>')
+    status_value = str(bundle.get("status", "missing"))
+    return (
+        '<section class="verification-panel">'
+        "<h3>Verify Run</h3>"
+        '<div class="job-id-group">'
+        f'<span class="status status-{escape(_status_class(status_value))}">{escape(status_value)}</span>'
+        f'<a class="hash-chip" href="/jobs/{escape(latest_job.job_id)}/verify">open proof bundle</a>'
+        "</div>"
+        '<table class="ledger-table compact-table">'
+        "<thead><tr><th>Check</th><th>Status</th><th>Items</th><th>Evidence</th></tr></thead>"
+        f"<tbody>{''.join(rows)}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
+def _verification_evidence_label(label: str, check: dict[str, object]) -> str:
+    items = check.get("items")
+    item_list = (
+        [item for item in items if isinstance(item, dict)]
+        if isinstance(items, list)
+        else []
+    )
+    if not item_list:
+        return "missing"
+    if label == "output_hashes":
+        recomputed_count = sum(
+            1 for item in item_list if item.get("recomputed_output_hash")
+        )
+        if recomputed_count == len(item_list):
+            return "verified from stored specialist payload"
+        if recomputed_count:
+            return "mixed: stored payload and present only"
+        return "present only"
+    if label == "ree":
+        source_count = sum(1 for item in item_list if item.get("validation_source"))
+        sources = {
+            str(item.get("validation_source", ""))
+            for item in item_list
+            if item.get("validation_source")
+        }
+        if source_count == len(item_list):
+            return "validated from receipt " + "/".join(sorted(sources))
+        if source_count:
+            return "mixed: receipt material and present only"
+        return "present only"
+    if label == "chain":
+        rpc_count = sum(1 for item in item_list if item.get("rpc_status"))
+        confirmed_count = sum(
+            1 for item in item_list if item.get("rpc_status") == "confirmed"
+        )
+        if confirmed_count == len(item_list):
+            return "verified by RPC"
+        if rpc_count:
+            return "checked by RPC"
+        return "present only"
+    if label == "attestations":
+        if str(check.get("status")) == "verified":
+            return "verified signature"
+        return "present only"
+    return "present only"
+
+
+def _render_risk_ree_hero(run_metadata: dict[str, object]) -> str:
+    attestations = _by_role(run_metadata.get("verification_attestations"))
+    risk_attestation = attestations.get("risk", {})
+    contribution_receipt = _chain_receipts_by_role(
+        run_metadata.get("chain_receipts"),
+        kind="contribution",
+    ).get("risk", {})
+    values = [
+        ("model", risk_attestation.get("ree_model_name")),
+        ("prompt_hash", risk_attestation.get("ree_prompt_hash")),
+        ("tokens_hash", risk_attestation.get("ree_tokens_hash")),
+        (
+            "receipt_hash",
+            contribution_receipt.get("ree_receipt_hash")
+            or risk_attestation.get("ree_receipt_hash"),
+        ),
+        ("output_hash", risk_attestation.get("output_hash")),
+        ("tx", contribution_receipt.get("tx_hash")),
+    ]
+    rows = "".join(
+        "<tr>"
+        f"<th>{escape(label)}</th>"
+        f'<td><code class="hash-chip">{escape(str(value))}</code></td>'
+        "</tr>"
+        for label, value in values
+        if value
+    )
+    status_value = str(
+        contribution_receipt.get("ree_status")
+        or risk_attestation.get("receipt_status")
+        or "missing"
+    )
+    if not rows:
+        rows = '<tr><td colspan="2">No risk REE proof metadata recorded.</td></tr>'
+    return (
+        '<section class="risk-ree-proof">'
+        "<h3>Risk REE Proof</h3>"
+        f'<span class="status status-{escape(_status_class(status_value))}">{escape(status_value)}</span>'
+        '<table class="ledger-table compact-table">'
+        f"<tbody>{rows}</tbody>"
+        "</table>"
+        "</section>"
+    )
+
+
 def _by_role(value: object) -> dict[str, dict[str, object]]:
     if not isinstance(value, list):
         return {}
@@ -468,6 +602,9 @@ def _render_proof_details(run_metadata: dict[str, object]) -> str:
                 ("attestation_hash", item.get("attestation_hash")),
                 ("verifier_signature", item.get("verifier_signature")),
                 ("ree_receipt_hash", item.get("ree_receipt_hash")),
+                ("ree_prompt_hash", item.get("ree_prompt_hash")),
+                ("ree_tokens_hash", item.get("ree_tokens_hash")),
+                ("ree_model_name", item.get("ree_model_name")),
                 ("receipt_status", item.get("receipt_status")),
             ]
             lines.extend(
@@ -820,11 +957,20 @@ def _render_node_rows(provenance_ledger: list[dict[str, object]]) -> str:
                 f"<td>{escape(str(record.get('transport', '')))}</td>"
                 f"<td>{escape(str(record.get('status', '')))}</td>"
                 f"<td>{escape(str(record.get('latency_ms', '')))}</td>"
+                f"<td>{escape(str(record.get('selection_reason', '')))}</td>"
+                f"<td>{escape(_format_attempted_peers(record))}</td>"
                 f"<td><code>{escape(str(record.get('dispatch_target', '')))}</code></td>"
                 "</tr>"
             )
         )
     return "".join(rows)
+
+
+def _format_attempted_peers(record: dict[str, object]) -> str:
+    attempted_peer_ids = record.get("attempted_peer_ids")
+    if not isinstance(attempted_peer_ids, list):
+        return ""
+    return " -> ".join(str(peer_id) for peer_id in attempted_peer_ids)
 
 
 def _render_topology(topology_snapshot: dict[str, object] | None) -> str:

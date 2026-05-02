@@ -1,4 +1,5 @@
 import asyncio
+import json
 from pathlib import Path
 
 import httpx
@@ -7,6 +8,7 @@ from httpx import ASGITransport
 from app.coordinator.service import CoordinatorDispatchResult
 from app.coordinator.synthesis import MemoSynthesisService
 from app.demo.fixtures import get_demo_fixture
+from app.identity.hashing import canonical_json_hash
 from app.main import app
 from app.schemas.contracts import (
     FinalMemo,
@@ -15,6 +17,9 @@ from app.schemas.contracts import (
     ThesisRequest,
 )
 from app.store import JobStore
+
+
+REE_FIXTURES = Path(__file__).parent / "fixtures" / "ree"
 
 
 class FailingLLMClient:
@@ -62,6 +67,29 @@ def test_home_page_renders_form_and_latest_job_summary(tmp_path: Path) -> None:
     assert "Will ETH validate this thesis over 30 days" in html
     assert "peer-regime-test" in html
     assert "Topology Snapshot" in html
+
+
+def test_completed_run_is_first_screen_when_available(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_trace_ledger(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert html.index("Latest Verified Run") < html.index("Run Another Thesis")
+    assert html.index("Verify Run") < html.index("Run Another Thesis")
+    assert 'class="tab-pane active" id="tab-ledger"' in html
+    assert 'id="tab-timeline"' in html
+    assert "Create Verifiable Run" in html
+    assert "Dispatch Agent Swarm" not in html
+    assert "Do not trust the memo. Verify every agent behind it." in html
 
 
 def test_demo_submit_redirects_back_to_home_with_new_job(tmp_path: Path) -> None:
@@ -275,7 +303,7 @@ def test_home_page_renders_proof_console_layout(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     html = response.text
-    assert "Signal Count Proof Console" in html
+    assert "Do not trust the memo. Verify every agent behind it." in html
     assert "Proof capabilities" in html
     assert "Run Timeline" in html
     assert "Agent Registry" in html
@@ -313,6 +341,147 @@ def test_proof_details_render_full_receipt_metadata(tmp_path: Path) -> None:
     )
     assert "contribution / explorer_url" not in html
     assert "https://gensyn-testnet.explorer.alchemy.com/tx/0xtrace123" in html
+
+
+def test_proof_console_renders_verify_action(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_trace_ledger(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    latest_job = asyncio.run(app.state.job_store.get_latest_job())
+    assert latest_job is not None
+    html = response.text
+    assert "Verify Run" in html
+    assert f"/jobs/{latest_job.job_id}/verify" in html
+    assert "open proof bundle" in html
+
+
+def test_proof_console_renders_precise_verification_states(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_trace_ledger(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "<td>output_hashes</td>" in html
+    assert "<td>attestations</td>" in html
+    assert "<td>ree</td>" in html
+    assert "<td>chain</td>" in html
+    assert "validated" in html
+    assert "present" in html
+
+
+def test_proof_console_renders_phase_17_verification_labels(
+    tmp_path: Path,
+) -> None:
+    asyncio.run(_configure_completed_job_with_phase_17_evidence(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "verified from stored specialist payload" in html
+    assert "validated from receipt body" in html
+    assert "verified by RPC" in html
+    assert "present only" in html
+
+
+def test_proof_console_renders_mixed_verification_labels(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_phase_17_evidence(tmp_path))
+    latest_job = asyncio.run(app.state.job_store.get_latest_job())
+    assert latest_job is not None
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata["specialist_responses"] = [
+        response
+        for response in run_metadata.get("specialist_responses", [])
+        if isinstance(response, dict) and response.get("node_role") == "risk"
+    ]
+    run_metadata["chain_receipts"] = [
+        {
+            "kind": "contribution",
+            "role": "risk",
+            "status": "confirmed",
+            "tx_hash": "0xphase17",
+            "rpc_status": "confirmed",
+        },
+        {
+            "kind": "contribution",
+            "role": "narrative",
+            "status": "confirmed",
+            "tx_hash": "0xpresentonly",
+        },
+    ]
+    asyncio.run(
+        app.state.job_store.complete_job(
+            job_id=latest_job.job_id,
+            memo=FinalMemo.model_validate(latest_job.memo),
+            provenance_ledger=latest_job.provenance_ledger,
+            run_metadata=run_metadata,
+            topology_snapshot=latest_job.topology_snapshot,
+        )
+    )
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "mixed: stored payload and present only" in html
+    assert "checked by RPC" in html
+
+
+def test_risk_ree_hero_proof_renders_receipt_components(tmp_path: Path) -> None:
+    asyncio.run(_configure_completed_job_with_trace_ledger(tmp_path))
+
+    async def _exercise() -> httpx.Response:
+        async with httpx.AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            return await client.get("/")
+
+    response = asyncio.run(_exercise())
+
+    assert response.status_code == 200
+    html = response.text
+    assert "Risk REE Proof" in html
+    assert "Qwen/Qwen3-0.6B" in html
+    assert "sha256:prompt000000000000000000000000000000000000000000000000000000" in html
+    assert "sha256:tokens000000000000000000000000000000000000000000000000000000" in html
+    assert (
+        "sha256:36ae72fccc5e179a6986d0af614546170ed60be0d0ab953e05978a10c7a9dcb3"
+        in html
+    )
+    assert "0xabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcdeabcde" in html
+    assert "0xtrace123" in html
 
 
 def test_proof_console_wraps_long_identifiers(tmp_path: Path) -> None:
@@ -512,6 +681,13 @@ async def _configure_completed_job_with_trace_ledger(tmp_path: Path) -> None:
                         "sha256:36ae72fccc5e179a6986d0af614546170ed60be0d0ab953e05978a10c7a9dcb3"
                     ),
                     "receipt_status": "validated",
+                    "ree_prompt_hash": (
+                        "sha256:prompt000000000000000000000000000000000000000000000000000000"
+                    ),
+                    "ree_tokens_hash": (
+                        "sha256:tokens000000000000000000000000000000000000000000000000000000"
+                    ),
+                    "ree_model_name": "Qwen/Qwen3-0.6B",
                 }
             ],
             "chain_receipts": [
@@ -527,6 +703,113 @@ async def _configure_completed_job_with_trace_ledger(tmp_path: Path) -> None:
                         "sha256:36ae72fccc5e179a6986d0af614546170ed60be0d0ab953e05978a10c7a9dcb3"
                     ),
                     "ree_status": "validated",
+                }
+            ],
+        }
+    )
+    await app.state.job_store.complete_job(
+        job_id=latest_job.job_id,
+        memo=FinalMemo.model_validate(latest_job.memo),
+        provenance_ledger=[
+            {
+                "node_role": "risk",
+                "peer_id": "peer-risk-test",
+                "service_name": "risk_analyst",
+                "transport": "axl-mcp",
+                "dispatch_target": "/mcp/peer-risk-test/risk_analyst",
+                "status": "completed",
+                "latency_ms": 22.5,
+            }
+        ],
+        run_metadata=run_metadata,
+        topology_snapshot=latest_job.topology_snapshot,
+    )
+
+
+async def _configure_completed_job_with_phase_17_evidence(tmp_path: Path) -> None:
+    await _configure_completed_job(tmp_path)
+    latest_job = await app.state.job_store.get_latest_job()
+    assert latest_job is not None
+    receipt_body = json.loads((REE_FIXTURES / "valid_receipt.json").read_text())
+    receipt_hash = str(receipt_body["receipt_hash"])
+    response_payload = {
+        "job_id": latest_job.job_id,
+        "node_role": "risk",
+        "peer_id": "peer-risk-test",
+        "summary": "Risk output is structured.",
+        "scenario_view": {"bull": 0.3, "base": 0.4, "bear": 0.3},
+        "signals": [],
+        "risks": ["Support can fail."],
+        "confidence": 0.72,
+        "citations": [],
+        "timestamp": "2026-05-02T00:00:00Z",
+        "agent_wallet": "0x00000000000000000000000000000000000000a1",
+        "ree_receipt_hash": receipt_hash,
+        "receipt_status": "validated",
+        "ree_prompt_hash": receipt_body["prompt_hash"],
+        "ree_tokens_hash": receipt_body["tokens_hash"],
+        "ree_model_name": receipt_body["model_name"],
+        "ree_receipt_body": receipt_body,
+        "ree_receipt_path": None,
+    }
+    output_hash = canonical_json_hash(response_payload)
+    narrative_payload = {
+        "job_id": latest_job.job_id,
+        "node_role": "narrative",
+        "peer_id": "peer-narrative-test",
+        "summary": "Narrative support is constructive.",
+        "scenario_view": {"bull": 0.4, "base": 0.4, "bear": 0.2},
+        "signals": ["ETF flows remain constructive."],
+        "risks": [],
+        "confidence": 0.7,
+        "citations": [],
+        "timestamp": "2026-05-02T00:00:00Z",
+        "agent_wallet": None,
+        "ree_receipt_hash": None,
+        "receipt_status": None,
+        "ree_prompt_hash": None,
+        "ree_tokens_hash": None,
+        "ree_model_name": None,
+        "ree_receipt_body": None,
+        "ree_receipt_path": None,
+    }
+    narrative_output_hash = canonical_json_hash(narrative_payload)
+    run_metadata = dict(latest_job.run_metadata)
+    run_metadata.update(
+        {
+            "verification_attestations": [
+                {
+                    "job_id": latest_job.job_id,
+                    "node_role": "risk",
+                    "peer_id": "peer-risk-test",
+                    "status": "accepted",
+                    "score": 0.91,
+                    "agent_wallet": "0x00000000000000000000000000000000000000a1",
+                    "output_hash": output_hash,
+                    "ree_receipt_hash": receipt_hash,
+                    "receipt_status": "validated",
+                    "ree_receipt_body": receipt_body,
+                },
+                {
+                    "job_id": latest_job.job_id,
+                    "node_role": "narrative",
+                    "peer_id": "peer-narrative-test",
+                    "status": "accepted",
+                    "score": 0.7,
+                    "output_hash": narrative_output_hash,
+                },
+            ],
+            "specialist_responses": [response_payload, narrative_payload],
+            "chain_receipts": [
+                {
+                    "kind": "contribution",
+                    "role": "risk",
+                    "status": "confirmed",
+                    "tx_hash": "0xphase17",
+                    "rpc_status": "confirmed",
+                    "explorer_url": (
+                        "https://gensyn-testnet.explorer.alchemy.com/tx/0xphase17"
+                    ),
                 }
             ],
         }
