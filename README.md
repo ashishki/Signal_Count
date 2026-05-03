@@ -3,7 +3,15 @@
 Proof console for AXL-routed market thesis review in the ETHGlobal OpenAgents /
 Gensyn track.
 
-Do not trust the memo. Verify every agent behind it.
+Do not trust the memo. Verify every specialist behind it.
+
+Signal Count turns one market thesis into an auditable risk memo with three
+visible proof layers:
+
+- AXL peer routing: which specialist handled which role, through which peer.
+- REE receipt path: whether the risk inference path has reproducible evidence.
+- Gensyn Testnet receipts: whether task, contribution, and reputation events
+  were anchored outside the app.
 
 Signal Count is not a trading bot. A user submits one market thesis, an asset,
 and a time horizon. A coordinator dispatches structured analysis requests to
@@ -14,6 +22,9 @@ and provenance.
 Each completed run exposes the AXL peer, wallet, output hash, verifier
 attestation, REE evidence when enabled, and Gensyn Testnet receipts when
 configured.
+
+The product claim is simple: a polished memo is not enough. The useful artifact
+is the proof trail behind the memo.
 
 ## What It Does
 
@@ -42,6 +53,28 @@ specialist services by peer ID and service name:
 That keeps the swarm boundary visible in the product: the demo can show which
 peers participated in a run, rather than hiding all analysis inside one local
 process.
+
+Without AXL, the coordinator would only have local function calls or opaque API
+calls. With AXL, each specialist is an addressable peer with a dispatch target,
+topology evidence, selection reason, fallback trail, and contribution receipt.
+AXL turns hidden specialist calls into inspectable peer-to-peer work.
+
+## Why REE
+
+REE is not used to claim that a memo is correct. It is used to make the riskiest
+model-dependent path inspectable.
+
+Under the active `risk-only-ree` policy, the risk specialist path can expose:
+
+- model name
+- prompt hash
+- token hash
+- receipt hash
+- specialist output hash
+- contribution transaction
+
+That gives users a receipt trail for the counter-thesis and invalidation path,
+where unverifiable reasoning would be the most damaging.
 
 ## Architecture
 
@@ -89,9 +122,9 @@ flowchart LR
 
 ![Signal Count main proof console](docs/assets/signal-count-main-console.png)
 
-### Agent Registry And Reputation
+### Specialist Registry And Reputation
 
-![Signal Count agent registry and reputation ledger](docs/assets/signal-count-agent-registry-reputation.png)
+![Signal Count specialist registry and reputation ledger](docs/assets/signal-count-agent-registry-reputation.png)
 
 ### Chain Receipts And Metadata
 
@@ -106,7 +139,7 @@ app/
   chain/            Gensyn Testnet transaction and receipt/reputation helpers
   coordinator/      Dispatch and memo synthesis workflow
   evaluation/       Verifier scoring, attestation, and reputation helpers
-  integrations/     LLM, market data, and news adapters
+  integrations/     Model, market data, and news adapters
   nodes/            Specialist service implementations
   ree/              Gensyn REE runner and receipt validation
   observability/    Metrics, tracing, provenance records
@@ -237,8 +270,7 @@ distinct public keys are also running.
 
 ### Multi-Peer AXL Mesh Demo
 
-For the strongest Gensyn demo, Signal Count can run with two local AXL nodes
-that have distinct public keys:
+Signal Count can run with two local AXL nodes that have distinct public keys:
 
 ```text
 Coordinator app -> AXL node A -> AXL node B -> MCP router B -> specialist services
@@ -287,7 +319,7 @@ identities without claiming a remote multi-machine deployment.
 
 ### Full Battle Demo Script
 
-For the video-ready path, use the full battle runner:
+For the complete proof path, use the full battle runner:
 
 ```bash
 scripts/run_full_battle_demo.sh
@@ -327,7 +359,7 @@ Current verified full-battle evidence from the May 2, 2026 recording run:
 
 ## Proof Console UI
 
-The browser UI has been upgraded from a simple demo page into a proof console:
+The browser UI is built around verification first:
 
 - Capability strip shows live mode, AXL transport, REE presence, chain receipt
   status, and indexed contribution count.
@@ -336,7 +368,7 @@ The browser UI has been upgraded from a simple demo page into a proof console:
 - Replayable fixtures remain available below the completed proof surface.
 - Demo fixtures remain replayable for stable walkthroughs.
 - Latest run is split into `Run Timeline`, `Risk Memo`, and `Proof Ledger`.
-- Proof ledger exposes agent registry, task trace, full hashes, REE status,
+- Proof ledger exposes specialist registry, task trace, full hashes, REE status,
   explorer links, reputation evidence, indexed events, run metadata, and
   topology.
 - Long peer IDs, hashes, and tx links wrap safely for laptop and mobile widths.
@@ -374,6 +406,8 @@ What is not claimed:
 - No ERC20, USDC, stablecoin, or real-money reward flow.
 - Native test-ETH payout evidence is opt-in, capped, tiny, and only for testnet.
 - No full archival chain reorg rollback beyond the configured repair window.
+- Market/news inputs in the demo are fixture-labelled, not live market data.
+- Signal Count is decision support, not trading advice or price prediction.
 
 ## Test
 
@@ -393,10 +427,12 @@ ruff format --check .: pass
 
 ## Submission Notes
 
-- Category: AI
+- Category: OpenAgents / Gensyn
 - Emoji: ⚖️
-- Short description: Proof console for AXL-routed AI analyst work: verify every
-  agent behind the memo.
+- Short description: Proof console for AXL-routed analyst work: verify every
+  specialist behind the memo.
+- One-liner: AXL makes coordination auditable, REE validates the risk path, and
+  Gensyn Testnet receipts anchor the contribution trail.
 
 ## AI Usage
 
