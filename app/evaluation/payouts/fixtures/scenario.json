@@ -1,0 +1,37 @@
+{
+  "base_wei": 1000000000,
+  "initial_reputation": {
+    "peer-good": 0.7,
+    "peer-mediocre": 0.7,
+    "peer-bad": 0.7
+  },
+  "rounds": [
+    {
+      "round_index": 0,
+      "job_id": "demo-payout-job-001",
+      "peer_scores": [
+        {"peer_id": "peer-good",     "role": "regime",    "wallet": "0xAAaa00000000000000000000000000000000000A", "verifier_score": 0.85},
+        {"peer_id": "peer-mediocre", "role": "narrative", "wallet": "0xBBbb00000000000000000000000000000000000B", "verifier_score": 0.65},
+        {"peer_id": "peer-bad",      "role": "risk",      "wallet": "0xCCcc00000000000000000000000000000000000C", "verifier_score": 0.30}
+      ]
+    },
+    {
+      "round_index": 1,
+      "job_id": "demo-payout-job-002",
+      "peer_scores": [
+        {"peer_id": "peer-good",     "role": "regime",    "wallet": "0xAAaa00000000000000000000000000000000000A", "verifier_score": 0.88},
+        {"peer_id": "peer-mediocre", "role": "narrative", "wallet": "0xBBbb00000000000000000000000000000000000B", "verifier_score": 0.60},
+        {"peer_id": "peer-bad",      "role": "risk",      "wallet": "0xCCcc00000000000000000000000000000000000C", "verifier_score": 0.20}
+      ]
+    },
+    {
+      "round_index": 2,
+      "job_id": "demo-payout-job-003",
+      "peer_scores": [
+        {"peer_id": "peer-good",     "role": "regime",    "wallet": "0xAAaa00000000000000000000000000000000000A", "verifier_score": 0.90},
+        {"peer_id": "peer-mediocre", "role": "narrative", "wallet": "0xBBbb00000000000000000000000000000000000B", "verifier_score": 0.55},
+        {"peer_id": "peer-bad",      "role": "risk",      "wallet": "0xCCcc00000000000000000000000000000000000C", "verifier_score": 0.15}
+      ]
+    }
+  ]
+}

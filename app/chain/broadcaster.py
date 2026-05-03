@@ -170,7 +170,11 @@ class GensynReceiptRecorder:
             points = _scaled_int(update["reputation_points"])
             role = str(update["node_role"])
             agent = str(update["agent_wallet"])
-            payout_wei = self._native_test_payout_wei()
+            payout_wei = _update_payout_wei(
+                update=update,
+                fallback=self._native_test_payout_wei(),
+                max_wei=self._config.native_test_payout_max_wei,
+            )
             if payout_wei:
                 reputation_tx = self._client.sign_record_reputation_payout_transaction(
                     task_id=task_id,
@@ -283,6 +287,18 @@ def _accepted_reputation_updates(
         and float(update.get("verifier_score", 0.0)) > 0.0
         and float(update.get("reputation_points", 0.0)) > 0.0
     ]
+
+
+def _update_payout_wei(
+    *,
+    update: dict[str, object],
+    fallback: int,
+    max_wei: int,
+) -> int:
+    raw = update.get("native_test_payout_wei")
+    if raw is None:
+        return fallback
+    return min(max(int(raw), 0), max_wei)
 
 
 def _scaled_int(value: object) -> int:
