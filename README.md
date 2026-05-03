@@ -150,7 +150,6 @@ app/
   templates/        Proof-console UI
 docs/
   ARCHITECTURE.md   Public architecture notes
-  final-submission.md Final claim/evidence checklist
   spec.md           Product specification
 tests/              Unit and integration tests
 ```

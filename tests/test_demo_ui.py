@@ -90,7 +90,7 @@ def test_hero_precedes_completed_run_when_available(tmp_path: Path) -> None:
     assert 'id="tab-timeline"' in html
     assert "Create Verifiable Run" in html
     assert "Dispatch Agent Swarm" not in html
-    assert "Do not trust the memo. Verify every agent behind it." in html
+    assert "Do not trust the memo. Verify every specialist behind it." in html
 
 
 def test_demo_submit_redirects_back_to_home_with_new_job(tmp_path: Path) -> None:
@@ -304,7 +304,7 @@ def test_home_page_renders_proof_console_layout(tmp_path: Path) -> None:
 
     assert response.status_code == 200
     html = response.text
-    assert "Do not trust the memo. Verify every agent behind it." in html
+    assert "Do not trust the memo. Verify every specialist behind it." in html
     assert "Proof capabilities" in html
     assert "Run Timeline" in html
     assert "Agent Registry" in html

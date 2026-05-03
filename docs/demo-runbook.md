@@ -16,7 +16,7 @@ Target 90-second flow after prewarm:
 
 1. Open `/` after the run is prewarmed. The first screen should already show
    `Latest Verified Run` and the active `Verify Run` / proof ledger tab.
-2. Say: "Do not trust the memo. Verify every agent behind it."
+2. Say: "Do not trust the memo. Verify every specialist behind it."
 3. Click `open proof bundle` and show output hashes, verifier attestations, REE,
    and chain status. Say which rows are `verified`, `validated`, `present`, or
    `missing`.
@@ -342,7 +342,7 @@ Capture these screenshots in order:
 
 ## Video Structure
 
-- 0:00-0:10: one sentence: "Do not trust the memo. Verify every agent behind
+- 0:00-0:10: one sentence: "Do not trust the memo. Verify every specialist behind
   it."
 - 0:10-0:30: active `Verify Run` tab and proof bundle.
 - 0:30-0:55: `Task Trace`, AXL peer IDs, REE status, and chain tx.

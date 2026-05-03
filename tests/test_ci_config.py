@@ -62,7 +62,7 @@ def test_positioning_copy_uses_verification_language() -> None:
     readme = Path("README.md").read_text(encoding="utf-8")
     template = Path("app/templates/index.html").read_text(encoding="utf-8")
 
-    required = "Do not trust the memo. Verify every agent behind it."
+    required = "Do not trust the memo. Verify every specialist behind it."
     assert required in readme
     assert required in template
     assert "LLM wrapper" not in readme
@@ -76,7 +76,7 @@ def test_demo_runbook_contains_judge_first_script() -> None:
     assert "Target 90-second flow after prewarm" in runbook
     assert "30-second sponsor pitch" in runbook
     assert "Completed proof console with active `Verify Run` tab" in runbook
-    assert "Do not trust the memo. Verify every agent behind it." in runbook
+    assert "Do not trust the memo. Verify every specialist behind it." in runbook
     assert "decision support, not trading advice" in runbook
 
 
