@@ -34,6 +34,20 @@ class Settings:
     risk_peer_id: str = getenv("RISK_PEER_ID", "peer-risk-example")
     risk_service_name: str = getenv("RISK_SERVICE_NAME", "risk_analyst")
     risk_peer_candidates: str = getenv("RISK_PEER_CANDIDATES", "")
+    chain_analyst_peer_id: str = getenv(
+        "CHAIN_ANALYST_PEER_ID",
+        "peer-chain-analyst-example",
+    )
+    chain_analyst_service_name: str = getenv(
+        "CHAIN_ANALYST_SERVICE_NAME",
+        "chain_analyst",
+    )
+    chain_analyst_peer_candidates: str = getenv(
+        "CHAIN_ANALYST_PEER_CANDIDATES",
+        "",
+    )
+    chain_analyst_wallet: str = getenv("CHAIN_ANALYST_WALLET", "")
+    chain_analyst_fixture_path: str = getenv("CHAIN_ANALYST_FIXTURE_PATH", "")
     axl_mcp_router_url: str = getenv("AXL_MCP_ROUTER_URL", "http://127.0.0.1:9003")
     axl_dispatch_timeout_seconds: float = float(
         getenv("AXL_DISPATCH_TIMEOUT_SECONDS", "30")

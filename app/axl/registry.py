@@ -46,6 +46,10 @@ class AXLRegistry:
                 peer_id=settings.risk_peer_id,
                 service_name=settings.risk_service_name,
             ),
+            "chain_analyst": PeerService(
+                peer_id=settings.chain_analyst_peer_id,
+                service_name=settings.chain_analyst_service_name,
+            ),
         }
         self._candidates = {
             "regime": _parse_peer_candidates(
@@ -59,6 +63,10 @@ class AXLRegistry:
             "risk": _parse_peer_candidates(
                 settings.risk_peer_candidates,
                 fallback=self._services["risk"],
+            ),
+            "chain_analyst": _parse_peer_candidates(
+                settings.chain_analyst_peer_candidates,
+                fallback=self._services["chain_analyst"],
             ),
         }
 

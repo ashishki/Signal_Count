@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from app.axl.registry import AXLRegistry
 from app.config.settings import Settings
+from app.nodes.chain_analyst.rpc import FixtureRPC
+from app.nodes.chain_analyst.service import ChainAnalystService
 from app.nodes.regime.service import RegimeService, RegimeSnapshot
-from app.schemas.contracts import ScenarioView, SpecialistResponse
+from app.schemas.contracts import ScenarioView, SpecialistResponse, TaskSpec
 
 
 class OfflineDemoAXLTransport:
@@ -27,6 +30,7 @@ class OfflineDemoAXLTransport:
                 self._registry.get_service_for_role("regime").peer_id,
                 self._registry.get_service_for_role("narrative").peer_id,
                 self._registry.get_service_for_role("risk").peer_id,
+                self._registry.get_service_for_role("chain_analyst").peer_id,
             ],
         }
 
@@ -60,6 +64,8 @@ class OfflineDemoAXLTransport:
             return self._narrative_response(peer_id, service_name, payload)
         if role == "risk":
             return self._risk_response(peer_id, service_name, payload)
+        if role == "chain_analyst":
+            return self._chain_analyst_response(peer_id, payload)
         raise ValueError(f"Unknown offline demo role: {role}")
 
     def _narrative_response(
@@ -124,6 +130,36 @@ class OfflineDemoAXLTransport:
             confidence=0.68,
             citations=[],
             timestamp=_now(),
+        )
+
+    def _chain_analyst_response(
+        self,
+        peer_id: str,
+        payload: dict[str, Any],
+    ) -> SpecialistResponse:
+        fixture_path = self._settings.chain_analyst_fixture_path or str(
+            Path(__file__).resolve().parent.parent
+            / "nodes"
+            / "chain_analyst"
+            / "fixtures"
+            / "chain_state.json"
+        )
+        return ChainAnalystService(
+            rpc=FixtureRPC(fixture_path),
+            peer_id=peer_id,
+            agent_wallet=self._settings.chain_analyst_wallet or None,
+        ).analyze(
+            task=TaskSpec(
+                job_id=str(payload["job_id"]),
+                thesis=str(payload.get("thesis", "")),
+                asset=str(payload.get("asset", "ETH")),
+                horizon_days=int(payload.get("horizon_days", 30)),
+            ),
+            block_number=(
+                int(payload["block_number"])
+                if payload.get("block_number") is not None
+                else None
+            ),
         )
 
 
