@@ -5,11 +5,17 @@ Gensyn track.
 
 Do not trust the memo. Verify every specialist behind it.
 
-Signal Count turns one market thesis into an auditable risk memo with three
-visible proof layers:
+Signal Count turns one market thesis into an auditable risk memo with visible
+proof layers:
 
 - AXL peer routing: which specialist handled which role, through which peer.
+- Signed-execution tamper checks: whether a response envelope was changed after
+  signing.
 - REE receipt path: whether the risk inference path has reproducible evidence.
+- Deterministic chain analyst: an optional specialist backed by pinned chain
+  events instead of an LLM sample.
+- Reputation-weighted payout ledger: how accepted verifier scores affect
+  capped testnet payout evidence.
 - Gensyn Testnet receipts: whether task, contribution, and reputation events
   were anchored outside the app.
 
@@ -30,9 +36,12 @@ is the proof trail behind the memo.
 
 - Accepts a single market thesis through a FastAPI API or proof-console UI.
 - Routes work to specialist roles for regime, narrative, and risk analysis.
+- Can run a deterministic `chain_analyst` specialist from pinned chain events.
 - Records node participation, peer IDs, latency, and topology snapshots.
 - Scores specialist outputs through a verifier and records deterministic
   attestation hashes.
+- Detects tampered signed execution envelopes for proof-console evidence.
+- Can generate reputation-weighted native test payout ledgers.
 - Can attach a real Gensyn REE receipt to the risk specialist path.
 - Can record task, contribution, and reputation receipt metadata on Gensyn
   Testnet when chain writing is configured.
@@ -91,8 +100,13 @@ AXL specialist peers
   |-- Regime analyst
   |-- Narrative analyst
   |-- Risk analyst
+  |-- Chain analyst (optional)
+  |
+Signed envelope checks (optional)
   |
 Verifier
+  |
+Reputation payout ledger
   |
 Memo synthesis + provenance ledger
 ```
@@ -104,14 +118,19 @@ flowchart LR
     C --> D[Regime specialist]
     C --> E[Narrative specialist]
     C --> F[Risk specialist]
+    C -. optional .-> N[Chain analyst specialist]
     D --> G[Verifier]
     E --> G
     F --> H[REE receipt path]
     H --> G
+    N --> G
     G --> I[Risk memo]
     G --> J[Hashes and attestations]
+    G --> P[Reputation payout ledger]
     J --> K[Gensyn Testnet receipts]
+    P --> K
     K --> L[Local chain indexer]
+    T[Signed envelope tamper checks] -. evidence artifact .-> M
     I --> M[Proof console]
     L --> M
 ```
@@ -138,9 +157,10 @@ app/
   axl/              AXL registry and client layer
   chain/            Gensyn Testnet transaction and receipt/reputation helpers
   coordinator/      Dispatch and memo synthesis workflow
-  evaluation/       Verifier scoring, attestation, and reputation helpers
+  evaluation/       Verifier scoring, attestation, reputation, and payout helpers
   integrations/     Model, market data, and news adapters
-  nodes/            Specialist service implementations
+  nodes/            Specialist service implementations, including chain_analyst
+  tamper/           Signed execution tamper evidence helpers
   ree/              Gensyn REE runner and receipt validation
   observability/    Metrics, tracing, provenance records
   orchestration/    Declared workflow graph and per-node graph state
@@ -206,7 +226,7 @@ Start the AXL MCP router first:
 python -m mcp_routing.mcp_router --port 9003
 ```
 
-Then run the three specialist services in separate terminals:
+Then run the three core specialist services in separate terminals:
 
 ```bash
 scripts/run_node_regime.sh
@@ -219,6 +239,9 @@ scripts/run_node_narrative.sh
 ```bash
 scripts/run_node_risk.sh
 ```
+
+The optional deterministic chain analyst role can be served by the same node
+server with `NODE_ROLE=chain_analyst` and `NODE_SERVICE_NAME=chain_analyst`.
 
 Finally run the coordinator app with its local AXL bridge URL:
 
@@ -378,8 +401,11 @@ Signal Count's proof path is intentionally explicit:
 
 ```text
 AXL dispatch evidence
+  -> optional signed-envelope tamper evidence
   -> specialist output hash
+  -> optional deterministic chain analyst snapshot
   -> verifier attestation and score
+  -> reputation-weighted payout ledger
   -> optional REE receipt hash/status
   -> optional Gensyn Testnet receipt/reputation tx
   -> indexed chain-event projection
@@ -390,6 +416,12 @@ What is verified locally:
 - The live AXL path reaches specialist `/mcp` services through the local AXL
   bridge and MCP router.
 - The same-machine two-node mesh demonstrates distinct AXL peer identities.
+- Signed execution tamper checks catch changed payloads, signer swaps, forged
+  signatures, role substitutions, and receipt overclaims.
+- The deterministic chain analyst can replay the same pinned fixture into the
+  same output hash.
+- Reputation payout policy tests cover score-driven reputation movement,
+  slashing, cumulative payouts, and JSON-stable ledgers.
 - REE receipt parsing and hash validation are covered by tests, and the real
   REE E2E script has been run against Gensyn REE.
 - Gensyn Testnet task/contribution/reputation transaction helpers and receipt
@@ -419,7 +451,7 @@ ruff format --check app/ tests/
 Current local verification:
 
 ```text
-150 passed, 1 skipped in socket-restricted sandbox
+159 passed, 1 skipped in socket-restricted sandbox
 ruff check .: pass
 ruff format --check .: pass
 ```
